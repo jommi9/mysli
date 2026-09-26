@@ -55,13 +55,13 @@ final class SystemAudioRecorder: @unchecked Sendable {
     /// Set before `start`. Used by the live transcript.
     var onBuffer: ((AVAudioPCMBuffer) -> Void)?
 
-    /// Start capturing system audio, encoding AAC into `url` (use a .caf
-    /// extension — CAF needs no finalization pass, so a crash mid-meeting
-    /// loses nothing already written).
     init(scope: TapScope = .fromConfig()) {
         self.scope = scope
     }
 
+    /// Start capturing system audio, encoding AAC into `url` (use a .caf
+    /// extension — CAF needs no finalization pass, so a crash mid-meeting
+    /// loses nothing already written).
     func start(writingTo url: URL) throws {
         guard !isRecording else { return }
 

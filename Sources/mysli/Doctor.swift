@@ -104,11 +104,7 @@ enum DoctorReport {
     /// CTC model it needs downloads on first use like the others.
     static func checkVocabulary() -> Check {
         guard let url = Config.vocabularyFile() else {
-            return Check(
-                name: "vocabulary",
-                status: .ok,
-                remediation: nil
-            )
+            return Check(name: "vocabulary (none, optional)", status: .ok, remediation: nil)
         }
         let terms = (try? String(contentsOf: url, encoding: .utf8))?
             .split(whereSeparator: \.isNewline)

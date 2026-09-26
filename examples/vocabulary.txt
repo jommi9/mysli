@@ -1,0 +1,20 @@
+# Custom vocabulary for mysli. Copy to ~/.config/mysli/vocabulary.txt.
+#
+# One term per line. Optionally list known mishearings after a colon:
+#   Term: mishearing one, mishearing two
+# A term only replaces what Parakeet wrote when the audio supports the term
+# better, so listing a term that never comes up costs nothing. Keep terms
+# to names Parakeet gets wrong; ordinary words don't need to be here.
+
+Hyperliquid: hyper liquid
+EigenLayer: eigen layer, Igan layer
+Ethena
+Pendle
+Solana
+Arbitrum
+Uniswap: uni swap
+Aave
+Lido
+Chainlink: chain link
+stablecoin: stable coin
+restaking: re staking

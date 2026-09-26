@@ -50,11 +50,12 @@ public enum VocabularyAlignment {
         var out: [TimedWord] = []
         var i = 0
         while i < words.count {
-            guard let (length, text) = replacedBy[i] else {
+            guard let hit = replacedBy[i] else {
                 out.append(words[i])
                 i += 1
                 continue
             }
+            let (length, text) = hit
             let last = words[i + length - 1]
             var merged = text
             if let p = last.text.last, ".?!,".contains(p), merged.last != p {

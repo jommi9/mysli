@@ -56,7 +56,7 @@ struct TapScope: Sendable {
         guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &ids) == noErr else {
             return []
         }
-        return ids.map { ($0, bundleID(of: $0)) }
+        return ids.map { (id: $0, bundleID: bundleID(of: $0)) }
     }
 
     private static func bundleID(of process: AudioObjectID) -> String? {
