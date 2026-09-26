@@ -1,13 +1,14 @@
 import AppKit
 import ArgumentParser
 import Foundation
+import os
 
 @main
-struct Quill: ParsableCommand {
+struct Mysli: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "quill",
+        commandName: "mysli",
         abstract: "Local meeting recorder + transcriber. Records mic and system audio as two tracks, then transcribes on-device.",
-        subcommands: [Run.self, Doctor.self, Install.self],
+        subcommands: [Run.self, Doctor.self, Install.self, Export.self, SnapshotUI.self],
         defaultSubcommand: Run.self
     )
 }
@@ -20,6 +21,9 @@ struct Run: ParsableCommand {
 
     @Option(name: .long, help: "Recordings root directory (overrides the config file).")
     var out: String?
+
+    @Flag(name: .long, help: "Start in the menu bar without opening the window (used at login).")
+    var background = false
 
     func run() throws {
         // ArgumentParser invokes run() on the main thread; promote that fact
@@ -44,6 +48,9 @@ struct Run: ParsableCommand {
         app.setActivationPolicy(.accessory)
 
         let controller = AppController(root: root)
+        if !background {
+            controller.showWindow()
+        }
 
         let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         sigint.setEventHandler {
@@ -54,7 +61,7 @@ struct Run: ParsableCommand {
         signal(SIGINT, SIG_IGN)
 
         FileHandle.standardError.write(Data(
-            "quill up · recordings → \(root.path) · ^C to quit\n".utf8
+            "mysli up · recordings → \(root.path) · ^C to quit\n".utf8
         ))
         app.run()
     }
@@ -74,6 +81,43 @@ struct Doctor: ParsableCommand {
     }
 }
 
+struct Export: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Export transcribed sessions to the configured folders and Notion.",
+        discussion: """
+        New transcripts export automatically. Use this to backfill older
+        sessions after adding a destination. Destinations a session was
+        already exported to are skipped.
+        """
+    )
+
+    @Argument(help: "Session folders, e.g. ~/Recordings/2026.09.26-1400")
+    var sessions: [String]
+
+    func run() throws {
+        guard !Exporter.configuredTargets().isEmpty else {
+            FileHandle.standardError.write(Data("no exports configured in \(Config.path.path)\n".utf8))
+            throw ExitCode(64)
+        }
+        let dirs = sessions.map {
+            URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        // ArgumentParser's sync entry point: run the async export on a
+        // detached task and wait for it.
+        let done = DispatchSemaphore(value: 0)
+        let failed = OSAllocatedUnfairLock(initialState: 0)
+        Task.detached {
+            for dir in dirs {
+                let failures = await Exporter.run(dir: dir) { print("\(dir.lastPathComponent): \($0)") }
+                failed.withLock { $0 += failures.count }
+            }
+            done.signal()
+        }
+        done.wait()
+        if failed.withLock({ $0 }) > 0 { throw ExitCode(1) }
+    }
+}
+
 /// Owns the menu bar, the current recording session, and the elapsed-time
 /// ticker. All state transitions happen on the main actor.
 @MainActor
@@ -81,13 +125,24 @@ final class AppController {
     private let root: URL
     private let menuBar = MenuBarController()
     private let transcription = TranscriptionCoordinator()
+    private let liveWindow = LiveTranscriptWindow()
+    private let state: AppState
+    private let mainWindow: MainWindowController
     private var session: RecordingSession?
+    private var live: LiveSession?
     private var ticker: Timer?
 
     init(root: URL) {
         self.root = root
+        state = AppState(recordingsRoot: root)
+        mainWindow = MainWindowController(state: state)
+        MainWindowController.installMainMenu { [weak self] in self?.shutdown() }
+        state.onToggleRecording = { [weak self] in self?.toggle() }
+        state.onShowLive = { [weak self] in self?.liveWindow.show() }
+        menuBar.onOpenWindow = { [weak self] in self?.mainWindow.show() }
         menuBar.onToggle = { [weak self] in self?.toggle() }
         menuBar.onOpenFolder = { [weak self] in self?.openFolder() }
+        menuBar.onShowLive = { [weak self] in self?.liveWindow.show() }
         menuBar.onQuit = { [weak self] in self?.shutdown() }
         menuBar.update(recording: false, elapsed: nil)
 
@@ -99,6 +154,10 @@ final class AppController {
             }
             await transcription.resumePending(root: root)
         }
+    }
+
+    func showWindow() {
+        mainWindow.show()
     }
 
     /// Stop any live session cleanly (finalizing files) and exit.
@@ -118,12 +177,24 @@ final class AppController {
     private func startSession() {
         do {
             let newSession = try RecordingSession(root: root)
-            try newSession.start()
+            let newLive = Config.liveEnabled() ? startLive(for: newSession) : nil
+            do {
+                try newSession.start()
+            } catch {
+                if let newLive { Task { await newLive.finish() } }
+                throw error
+            }
             session = newSession
+            live = newLive
+            state.isRecording = true
+            state.elapsed = "0:00"
+            state.recordingSession = newSession.dir.lastPathComponent
+            state.refresh()
+            state.selection = newSession.dir.lastPathComponent
             FileHandle.standardError.write(Data("● recording → \(newSession.dir.path)\n".utf8))
         } catch {
             FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
-            notifyUser(title: "quill — recording failed", body: "\(error)")
+            notifyUser(title: "mysli — recording failed", body: "\(error)")
             return
         }
 
@@ -133,14 +204,39 @@ final class AppController {
         }
     }
 
+    /// Set up the live transcript for a session that is about to start.
+    private func startLive(for session: RecordingSession) -> LiveSession {
+        let transcript = LiveTranscript(
+            sessionDir: session.dir,
+            recordingStartedAt: session.startedAt,
+            dedupeEcho: Config.echoFilterEnabled()
+        )
+        let live = LiveSession(transcript: transcript)
+        session.attachLive(live)
+        liveWindow.attach(transcript)
+        if Config.liveShowWindow() {
+            liveWindow.show()
+        }
+        return live
+    }
+
     private func stopSession() {
         guard let session else { return }
         session.stop()
+        if let live {
+            self.live = nil
+            // The recorders have stopped, so the feeds are complete. The
+            // final transcript doesn't wait on the live one.
+            Task { await live.finish() }
+        }
         let elapsed = Self.format(Date().timeIntervalSince(session.startedAt))
         FileHandle.standardError.write(Data(
             "○ stopped · \(elapsed) · \(session.dir.path)\n".utf8
         ))
         self.session = nil
+        state.isRecording = false
+        state.recordingSession = nil
+        state.refresh()
         ticker?.invalidate()
         ticker = nil
         menuBar.update(recording: false, elapsed: nil)
@@ -150,6 +246,12 @@ final class AppController {
     }
 
     private func showTranscription(_ status: TranscriptionCoordinator.Status) {
+        if case .transcribing(let name, _) = status {
+            state.transcribingSession = name
+        } else {
+            state.transcribingSession = nil
+        }
+        state.refresh()
         switch status {
         case .idle:
             menuBar.updateTranscription(nil)
@@ -164,10 +266,9 @@ final class AppController {
 
     private func tick() {
         guard let session else { return }
-        menuBar.update(
-            recording: true,
-            elapsed: Self.format(Date().timeIntervalSince(session.startedAt))
-        )
+        let elapsed = Self.format(Date().timeIntervalSince(session.startedAt))
+        menuBar.update(recording: true, elapsed: elapsed)
+        state.elapsed = elapsed
     }
 
     private func openFolder() {

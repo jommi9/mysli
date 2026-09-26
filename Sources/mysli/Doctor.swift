@@ -21,7 +21,8 @@ enum DoctorReport {
             checkSystemAudio(),
             checkRecordingsRoot(recordingsRoot),
             checkTranscription(),
-        ]
+            checkVocabulary(),
+        ] + checkExports()
     }
 
     static func checkMicrophone() -> Check {
@@ -39,7 +40,7 @@ enum DoctorReport {
             return Check(
                 name: "microphone",
                 status: .fail("denied"),
-                remediation: "System Settings → Privacy & Security → Microphone → enable for quill (or your terminal)"
+                remediation: "System Settings → Privacy & Security → Microphone → enable for mysli (or your terminal)"
             )
         @unknown default:
             return Check(name: "microphone", status: .fail("unknown state"), remediation: nil)
@@ -86,15 +87,61 @@ enum DoctorReport {
                 remediation: nil
             )
         }
-        let cache = AsrModels.defaultCacheDirectory(for: .v2)
-        if AsrModels.modelsExist(at: cache, version: .v2) {
+        let version = Config.parakeetVersion()
+        let label = version == .v3 ? "parakeet v3" : "parakeet v2"
+        let cache = AsrModels.defaultCacheDirectory(for: version)
+        if AsrModels.modelsExist(at: cache, version: version) {
             return Check(name: "transcription", status: .ok, remediation: nil)
         }
         return Check(
             name: "transcription",
-            status: .warn("parakeet models not downloaded (~600 MB)"),
+            status: .warn("\(label) models not downloaded (~600 MB)"),
             remediation: "downloads automatically on first transcription — record a short test session while online"
         )
+    }
+
+    /// Report whether a vocabulary file is active. Informational only: the
+    /// CTC model it needs downloads on first use like the others.
+    static func checkVocabulary() -> Check {
+        guard let url = Config.vocabularyFile() else {
+            return Check(name: "vocabulary (none, optional)", status: .ok, remediation: nil)
+        }
+        let terms = (try? String(contentsOf: url, encoding: .utf8))?
+            .split(whereSeparator: \.isNewline)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("#") }
+            .count ?? 0
+        if terms == 0 {
+            return Check(
+                name: "vocabulary",
+                status: .warn("\(url.path) has no terms"),
+                remediation: "one term per line, e.g. `Hyperliquid: hyper liquid`"
+            )
+        }
+        return Check(name: "vocabulary (\(terms) terms)", status: .ok, remediation: nil)
+    }
+
+    /// Local checks only: folders exist, a Notion token is present.
+    static func checkExports() -> [Check] {
+        var checks: [Check] = []
+        for folder in Config.exportFolders() {
+            var isDir: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir) && isDir.boolValue
+            checks.append(Check(
+                name: "export folder \(folder.lastPathComponent)",
+                status: exists ? .ok : .warn("\(folder.path) doesn't exist"),
+                remediation: exists ? nil : "create it, or start the app that syncs it (Google Drive, Dropbox)"
+            ))
+        }
+        if Config.notionDatabaseID() != nil {
+            let hasToken = Secrets.notionToken() != nil
+            checks.append(Check(
+                name: "notion export",
+                status: hasToken ? .ok : .warn("no token in the Keychain"),
+                remediation: hasToken ? nil
+                    : "security add-generic-password -s \(Secrets.notionKeychainService) -a notion -w"
+            ))
+        }
+        return checks
     }
 
     static func print(_ checks: [Check]) {

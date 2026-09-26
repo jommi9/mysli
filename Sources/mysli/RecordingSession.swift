@@ -32,6 +32,12 @@ final class RecordingSession {
         dir = candidate
     }
 
+    /// Route both tracks' buffers into a live transcript. Call before `start`.
+    func attachLive(_ live: LiveSession) {
+        mic.onBuffer = { live.mic.push($0) }
+        system.onBuffer = { live.system.push($0) }
+    }
+
     /// Start both tracks. If the mic fails after the system tap started, the
     /// tap is torn down so we never run half a session silently.
     func start() throws {

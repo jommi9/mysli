@@ -1,8 +1,10 @@
 import Foundation
+import MysliCore
 
 /// Post-recording pipeline: a serial queue of session folders to transcribe.
-/// mic.caf → "me", system.caf → "them"; each track's segments are shifted by
-/// its start offset, merged by timestamp, and written as transcript.json
+/// mic.caf → "me", system.caf → "them"; each track's words are shifted by its
+/// start offset, echo of the far end is dropped from the mic words, and both
+/// tracks are segmented, merged by timestamp, and written as transcript.json
 /// (canonical) plus transcript.md (readable). The filesystem is the queue —
 /// `resumePending()` rescans at launch, so a crash or quit mid-transcription
 /// just retries on next run. Failures append to the session's transcribe.log
@@ -45,10 +47,14 @@ actor TranscriptionCoordinator {
         ) else { return }
 
         let fm = FileManager.default
+        // Untranscribed sessions, plus transcribed ones whose export failed
+        // last time (only sessions an export was attempted for, so adding a
+        // destination doesn't upload the whole archive).
         let pending = entries
             .filter {
-                fm.fileExists(atPath: $0.appendingPathComponent("meta.json").path)
-                    && !fm.fileExists(atPath: $0.appendingPathComponent("transcript.json").path)
+                guard fm.fileExists(atPath: $0.appendingPathComponent("meta.json").path) else { return false }
+                if !fm.fileExists(atPath: $0.appendingPathComponent("transcript.json").path) { return true }
+                return Exporter.wasAttempted($0) && !Exporter.pendingTargets(for: $0).isEmpty
             }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         for dir in pending where !queue.contains(dir) {
@@ -56,7 +62,7 @@ actor TranscriptionCoordinator {
         }
         if !pending.isEmpty {
             FileHandle.standardError.write(Data(
-                "resuming \(pending.count) untranscribed session(s)\n".utf8
+                "resuming \(pending.count) session(s) needing transcription or export\n".utf8
             ))
         }
         drainIfIdle()
@@ -76,14 +82,27 @@ actor TranscriptionCoordinator {
             let dir = queue.removeFirst()
             publish(.transcribing(session: dir.lastPathComponent, queued: queue.count))
             do {
-                try await transcribe(dir)
-                notifyUser(title: "quill — transcript ready", body: dir.lastPathComponent)
-                runHook(for: dir)
+                let transcriptURL = dir.appendingPathComponent("transcript.json")
+                let needsTranscript = !FileManager.default.fileExists(atPath: transcriptURL.path)
+                if needsTranscript {
+                    try await transcribe(dir)
+                }
+                let failures = await Exporter.run(dir: dir) { [self] in self.log(dir, $0) }
+                if !failures.isEmpty {
+                    notifyUser(
+                        title: "mysli — export failed",
+                        body: "\(dir.lastPathComponent) — retries on next launch, see transcribe.log"
+                    )
+                }
+                if needsTranscript {
+                    notifyUser(title: "mysli — transcript ready", body: dir.lastPathComponent)
+                    runHook(for: dir)
+                }
             } catch {
                 log(dir, "transcription failed: \(error)")
                 lastFailure = dir.lastPathComponent
                 notifyUser(
-                    title: "quill — transcription failed",
+                    title: "mysli — transcription failed",
                     body: "\(dir.lastPathComponent) — see transcribe.log"
                 )
             }
@@ -101,43 +120,56 @@ actor TranscriptionCoordinator {
         let meta = try SessionMeta.read(from: dir)
         let engine = try await preparedEngine()
 
-        var merged: [Transcript.Segment] = []
+        // Words per speaker, shifted onto the session clock.
+        var words: [String: [TimedWord]] = [:]
         for track in meta.tracks {
             let audio = dir.appendingPathComponent(track.file)
             guard FileManager.default.fileExists(atPath: audio.path) else {
                 log(dir, "skipping missing track \(track.file)")
                 continue
             }
-            log(dir, "transcribing \(track.file) (\(engine.name))")
+            log(dir, "transcribing \(track.file) (\(engine.name) · \(engine.model))")
             // One bad track (empty, truncated) shouldn't cost us the other's
             // transcript — log it and keep going.
-            let segments: [TranscriptSegment]
             do {
-                segments = try await engine.transcribe(audio)
+                let offset = TimeInterval(track.offsetMs) / 1000
+                words[track.speaker] = try await engine.transcribe(audio).map { $0.shifted(by: offset) }
             } catch {
                 log(dir, "skipping \(track.file): \(error)")
-                continue
-            }
-            let offset = TimeInterval(track.offsetMs) / 1000
-            merged += segments.map {
-                Transcript.Segment(
-                    speaker: track.speaker,
-                    start_ms: Int(($0.start + offset) * 1000),
-                    end_ms: Int(($0.end + offset) * 1000),
-                    text: $0.text
-                )
             }
         }
-        merged.sort { $0.start_ms < $1.start_ms }
 
-        let transcript = Transcript(
-            engine: engine.name,
-            model: engine.model,
-            created_at: ISO8601DateFormatter().string(from: Date()),
-            segments: merged
+        // Speaker bleed: without headphones the mic hears the far end, so
+        // their words would appear twice, once as "me". The system track is
+        // the clean reference.
+        var echoRemoved = 0
+        if Config.echoFilterEnabled(), let mic = words["me"], let system = words["them"] {
+            let result = EchoFilter().removeEcho(mic: mic, system: system)
+            echoRemoved = result.removed.count
+            if !result.removed.isEmpty {
+                log(dir, "echo filter: dropped \(result.removed.count) of \(mic.count) mic words")
+            }
+            words["me"] = result.kept
+        }
+
+        let document = TranscriptDocument.build(
+            session: meta.session(id: dir.lastPathComponent),
+            engine: .init(
+                name: engine.name,
+                model: engine.model,
+                vocabulary: Config.vocabularyFile() != nil,
+                echo_filter: Config.echoFilterEnabled(),
+                echo_words_removed: echoRemoved
+            ),
+            createdAt: SessionMeta.localISO(Date()),
+            words: words
         )
-        try transcript.write(to: dir)
-        log(dir, "done — \(merged.count) segments")
+        // Both writes are atomic (temp file + rename), so a partial
+        // transcript never exists on disk; resumePending treats
+        // transcript.json as "done".
+        try document.jsonData().write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
+        try Data(document.markdown().utf8).write(to: dir.appendingPathComponent("transcript.md"), options: .atomic)
+        log(dir, "done — \(document.segments.count) segments")
     }
 
     private func preparedEngine() async throws -> TranscriptionEngine {
@@ -148,7 +180,10 @@ actor TranscriptionCoordinator {
                 "warning: unknown transcription engine \"\(configured)\" — using parakeet\n".utf8
             ))
         }
-        let engine = ParakeetEngine()
+        let engine = ParakeetEngine(
+            version: Config.parakeetVersion(),
+            vocabularyURL: Config.vocabularyFile()
+        )
         try await engine.prepare()
         self.engine = engine
         return engine
@@ -169,7 +204,7 @@ actor TranscriptionCoordinator {
         }
     }
 
-    private func log(_ dir: URL, _ message: String) {
+    nonisolated private func log(_ dir: URL, _ message: String) {
         let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
         let url = dir.appendingPathComponent("transcribe.log")
         if let handle = FileHandle(forWritingAtPath: url.path) {
@@ -187,7 +222,8 @@ actor TranscriptionCoordinator {
 }
 
 /// The slice of meta.json the coordinator needs: which files exist, who they
-/// represent, and how far each track started after the earliest one.
+/// represent, how far each track started after the earliest one, and when
+/// the session ran.
 private struct SessionMeta {
     struct Track {
         let file: String
@@ -196,6 +232,9 @@ private struct SessionMeta {
     }
 
     let tracks: [Track]
+    let started: Date?
+    let ended: Date?
+    let durationSeconds: Int?
 
     enum MetaError: Error, CustomStringConvertible {
         case unreadable(URL)
@@ -225,51 +264,38 @@ private struct SessionMeta {
         if let system = files["system"] {
             tracks.append(Track(file: system, speaker: "them", offsetMs: offsets["system"] ?? 0))
         }
-        return SessionMeta(tracks: tracks)
-    }
-}
-
-/// Canonical transcript. Property names are the JSON schema — this struct
-/// exists to be serialized.
-private struct Transcript: Codable {
-    struct Segment: Codable {
-        let speaker: String
-        let start_ms: Int
-        let end_ms: Int
-        let text: String
+        let iso = ISO8601DateFormatter()
+        return SessionMeta(
+            tracks: tracks,
+            started: (json["started"] as? String).flatMap(iso.date(from:)),
+            ended: (json["ended"] as? String).flatMap(iso.date(from:)),
+            durationSeconds: json["duration_seconds"] as? Int
+        )
     }
 
-    let engine: String
-    let model: String
-    let created_at: String
-    let segments: [Segment]
-
-    /// Write transcript.json and render transcript.md. Both writes are atomic
-    /// (temp file + rename), so a partially written transcript never exists on
-    /// disk — resumePending treats presence of transcript.json as "done".
-    func write(to dir: URL) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(self)
-            .write(to: dir.appendingPathComponent("transcript.json"), options: .atomic)
-        try Data(rendered(title: dir.lastPathComponent).utf8)
-            .write(to: dir.appendingPathComponent("transcript.md"), options: .atomic)
+    /// Session block for the transcript, times in the Mac's local zone.
+    func session(id: String) -> TranscriptDocument.Session {
+        TranscriptDocument.Session(
+            id: id,
+            title: started.map(Self.title) ?? id,
+            started_at: started.map(Self.localISO),
+            ended_at: ended.map(Self.localISO),
+            duration_seconds: durationSeconds,
+            timezone: TimeZone.current.identifier
+        )
     }
 
-    private func rendered(title: String) -> String {
-        var lines = ["# \(title)", "", "engine: \(engine) (\(model))", ""]
-        for seg in segments {
-            lines.append("**[\(Self.clock(seg.start_ms))] \(seg.speaker):** \(seg.text)")
-            lines.append("")
-        }
-        return lines.joined(separator: "\n")
+    /// ISO 8601 with the local UTC offset, e.g. 2026-09-26T14:00:00+02:00.
+    static func localISO(_ date: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.timeZone = .current
+        return f.string(from: date)
     }
 
-    private static func clock(_ ms: Int) -> String {
-        let total = ms / 1000
-        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%d:%02d", m, s)
+    private static func title(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return "Meeting \(f.string(from: date))"
     }
 }

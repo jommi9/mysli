@@ -12,6 +12,8 @@ final class MenuBarController {
 
     var onToggle: (() -> Void)?
     var onOpenFolder: (() -> Void)?
+    var onShowLive: (() -> Void)?
+    var onOpenWindow: (() -> Void)?
     var onQuit: (() -> Void)?
 
     init() {
@@ -38,6 +40,20 @@ final class MenuBarController {
         )
         menu.addItem(toggleItem)
 
+        let openWindow = NSMenuItem(
+            title: "Open mysli…",
+            action: #selector(openWindowClicked),
+            keyEquivalent: "m"
+        )
+        menu.addItem(openWindow)
+
+        let showLive = NSMenuItem(
+            title: "Show live transcript",
+            action: #selector(showLiveClicked),
+            keyEquivalent: "l"
+        )
+        menu.addItem(showLive)
+
         let openFolder = NSMenuItem(
             title: "Open recordings folder",
             action: #selector(openFolderClicked),
@@ -48,13 +64,13 @@ final class MenuBarController {
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
-            title: "Quit quill",
+            title: "Quit mysli",
             action: #selector(quitClicked),
             keyEquivalent: "q"
         )
         menu.addItem(quit)
 
-        for item in [toggleItem, openFolder, quit] {
+        for item in [toggleItem, openWindow, showLive, openFolder, quit] {
             item.target = self
         }
 
@@ -109,6 +125,8 @@ final class MenuBarController {
     }
 
     @objc private func toggleClicked() { onToggle?() }
+    @objc private func openWindowClicked() { onOpenWindow?() }
+    @objc private func showLiveClicked() { onShowLive?() }
     @objc private func openFolderClicked() { onOpenFolder?() }
     @objc private func quitClicked() { onQuit?() }
 }
