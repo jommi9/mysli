@@ -1,12 +1,5 @@
 import Foundation
-
-/// One timed span of recognized speech from a single track, relative to that
-/// track's own start.
-struct TranscriptSegment: Sendable {
-    let start: TimeInterval
-    let end: TimeInterval
-    let text: String
-}
+import MysliCore
 
 /// A speech-to-text engine mysli can run locally. Engines are prepared lazily
 /// (model download + load) when the transcription queue has work and released
@@ -17,6 +10,9 @@ protocol TranscriptionEngine: Sendable {
     /// Concrete model identifier recorded as transcript.json provenance.
     var model: String { get }
     func prepare() async throws
-    func transcribe(_ audio: URL) async throws -> [TranscriptSegment]
+    /// Timed words for one track, relative to that track's own start. Word
+    /// level (rather than segments) so the coordinator can drop echo from
+    /// the mic track before anything is grouped into sentences.
+    func transcribe(_ audio: URL) async throws -> [TimedWord]
     func release() async
 }

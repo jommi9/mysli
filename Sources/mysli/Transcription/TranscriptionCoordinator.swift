@@ -1,8 +1,10 @@
 import Foundation
+import MysliCore
 
 /// Post-recording pipeline: a serial queue of session folders to transcribe.
-/// mic.caf → "me", system.caf → "them"; each track's segments are shifted by
-/// its start offset, merged by timestamp, and written as transcript.json
+/// mic.caf → "me", system.caf → "them"; each track's words are shifted by its
+/// start offset, echo of the far end is dropped from the mic words, and both
+/// tracks are segmented, merged by timestamp, and written as transcript.json
 /// (canonical) plus transcript.md (readable). The filesystem is the queue —
 /// `resumePending()` rescans at launch, so a crash or quit mid-transcription
 /// just retries on next run. Failures append to the session's transcribe.log
@@ -101,34 +103,48 @@ actor TranscriptionCoordinator {
         let meta = try SessionMeta.read(from: dir)
         let engine = try await preparedEngine()
 
-        var merged: [Transcript.Segment] = []
+        // Words per speaker, shifted onto the session clock.
+        var words: [String: [TimedWord]] = [:]
         for track in meta.tracks {
             let audio = dir.appendingPathComponent(track.file)
             guard FileManager.default.fileExists(atPath: audio.path) else {
                 log(dir, "skipping missing track \(track.file)")
                 continue
             }
-            log(dir, "transcribing \(track.file) (\(engine.name))")
+            log(dir, "transcribing \(track.file) (\(engine.name) · \(engine.model))")
             // One bad track (empty, truncated) shouldn't cost us the other's
             // transcript — log it and keep going.
-            let segments: [TranscriptSegment]
             do {
-                segments = try await engine.transcribe(audio)
+                let offset = TimeInterval(track.offsetMs) / 1000
+                words[track.speaker] = try await engine.transcribe(audio).map { $0.shifted(by: offset) }
             } catch {
                 log(dir, "skipping \(track.file): \(error)")
-                continue
             }
-            let offset = TimeInterval(track.offsetMs) / 1000
-            merged += segments.map {
+        }
+
+        // Speaker bleed: without headphones the mic hears the far end, so
+        // their words would appear twice, once as "me". The system track is
+        // the clean reference.
+        if Config.echoFilterEnabled(), let mic = words["me"], let system = words["them"] {
+            let result = EchoFilter().removeEcho(mic: mic, system: system)
+            if !result.removed.isEmpty {
+                log(dir, "echo filter: dropped \(result.removed.count) of \(mic.count) mic words")
+            }
+            words["me"] = result.kept
+        }
+
+        var merged: [Transcript.Segment] = []
+        for (speaker, trackWords) in words {
+            merged += Segmenter.segments(from: trackWords).map {
                 Transcript.Segment(
-                    speaker: track.speaker,
-                    start_ms: Int(($0.start + offset) * 1000),
-                    end_ms: Int(($0.end + offset) * 1000),
+                    speaker: speaker,
+                    start_ms: Int($0.start * 1000),
+                    end_ms: Int($0.end * 1000),
                     text: $0.text
                 )
             }
         }
-        merged.sort { $0.start_ms < $1.start_ms }
+        merged.sort { ($0.start_ms, $0.speaker) < ($1.start_ms, $1.speaker) }
 
         let transcript = Transcript(
             engine: engine.name,
@@ -148,7 +164,10 @@ actor TranscriptionCoordinator {
                 "warning: unknown transcription engine \"\(configured)\" — using parakeet\n".utf8
             ))
         }
-        let engine = ParakeetEngine()
+        let engine = ParakeetEngine(
+            version: Config.parakeetVersion(),
+            vocabularyURL: Config.vocabularyFile()
+        )
         try await engine.prepare()
         self.engine = engine
         return engine

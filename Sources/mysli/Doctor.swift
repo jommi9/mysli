@@ -21,6 +21,7 @@ enum DoctorReport {
             checkSystemAudio(),
             checkRecordingsRoot(recordingsRoot),
             checkTranscription(),
+            checkVocabulary(),
         ]
     }
 
@@ -86,15 +87,41 @@ enum DoctorReport {
                 remediation: nil
             )
         }
-        let cache = AsrModels.defaultCacheDirectory(for: .v2)
-        if AsrModels.modelsExist(at: cache, version: .v2) {
+        let version = Config.parakeetVersion()
+        let label = version == .v3 ? "parakeet v3" : "parakeet v2"
+        let cache = AsrModels.defaultCacheDirectory(for: version)
+        if AsrModels.modelsExist(at: cache, version: version) {
             return Check(name: "transcription", status: .ok, remediation: nil)
         }
         return Check(
             name: "transcription",
-            status: .warn("parakeet models not downloaded (~600 MB)"),
+            status: .warn("\(label) models not downloaded (~600 MB)"),
             remediation: "downloads automatically on first transcription — record a short test session while online"
         )
+    }
+
+    /// Report whether a vocabulary file is active. Informational only: the
+    /// CTC model it needs downloads on first use like the others.
+    static func checkVocabulary() -> Check {
+        guard let url = Config.vocabularyFile() else {
+            return Check(
+                name: "vocabulary",
+                status: .ok,
+                remediation: nil
+            )
+        }
+        let terms = (try? String(contentsOf: url, encoding: .utf8))?
+            .split(whereSeparator: \.isNewline)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("#") }
+            .count ?? 0
+        if terms == 0 {
+            return Check(
+                name: "vocabulary",
+                status: .warn("\(url.path) has no terms"),
+                remediation: "one term per line, e.g. `Hyperliquid: hyper liquid`"
+            )
+        }
+        return Check(name: "vocabulary (\(terms) terms)", status: .ok, remediation: nil)
     }
 
     static func print(_ checks: [Check]) {

@@ -1,11 +1,20 @@
+import FluidAudio
 import Foundation
 
 /// Optional user config at ~/.config/mysli/config.json:
 ///
 ///     {
 ///       "recordings_dir": "~/Recordings",
-///       "transcription": { "enabled": true, "engine": "parakeet" },
-///       "mic_voice_processing": true,
+///       "transcription": {
+///         "enabled": true,
+///         "engine": "parakeet",
+///         "model": "v2",
+///         "echo_filter": true,
+///         "vocabulary": "~/.config/mysli/vocabulary.txt"
+///       },
+///       "live": { "enabled": true, "show_window": true },
+///       "system_audio": { "exclude_apps": ["com.spotify.client"], "only_apps": [] },
+///       "mic_voice_processing": false,
 ///       "on_stop": "my-hook"
 ///     }
 ///
@@ -14,8 +23,10 @@ import Foundation
 /// directory as its argument — after the transcript is written, or right
 /// after recording when transcription is disabled.
 enum Config {
-    static let path = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/mysli/config.json")
+    static let directory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/mysli", isDirectory: true)
+
+    static let path = directory.appendingPathComponent("config.json")
 
     static let defaultRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Recordings", isDirectory: true)
@@ -33,6 +44,8 @@ enum Config {
         return cmd
     }
 
+    // MARK: - Transcription
+
     /// Whether finished recordings are transcribed automatically. Default on.
     static func transcriptionEnabled() -> Bool {
         transcription()?["enabled"] as? Bool ?? true
@@ -44,9 +57,89 @@ enum Config {
         transcription()?["engine"] as? String ?? "parakeet"
     }
 
+    /// Parakeet model: "v2" (English, default, best English recall) or "v3"
+    /// (25 European languages including Finnish, auto-detected).
+    static func parakeetVersion() -> AsrModelVersion {
+        switch transcription()?["model"] as? String {
+        case "v3"?: return .v3
+        case nil, "v2"?: return .v2
+        case let other?:
+            FileHandle.standardError.write(Data(
+                "warning: unknown parakeet model \"\(other)\" — using v2\n".utf8
+            ))
+            return .v2
+        }
+    }
+
+    /// Drop far-end speech that bled into the mic from the final transcript.
+    /// Default on; it only fires on runs of words the system track also has
+    /// at the same moment, so on headphones it has nothing to do.
+    static func echoFilterEnabled() -> Bool {
+        transcription()?["echo_filter"] as? Bool ?? true
+    }
+
+    /// Custom vocabulary for boosting rare terms, if the file exists.
+    /// Defaults to ~/.config/mysli/vocabulary.txt.
+    static func vocabularyFile() -> URL? {
+        let url: URL
+        if let configured = transcription()?["vocabulary"] as? String, !configured.isEmpty {
+            url = URL(fileURLWithPath: (configured as NSString).expandingTildeInPath)
+        } else {
+            url = directory.appendingPathComponent("vocabulary.txt")
+        }
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     private static func transcription() -> [String: Any]? {
         load()?["transcription"] as? [String: Any]
     }
+
+    // MARK: - Live transcript
+
+    /// Stream both tracks through a small streaming model while recording.
+    /// Default on. The final transcript is still produced from the files.
+    static func liveEnabled() -> Bool {
+        live()?["enabled"] as? Bool ?? true
+    }
+
+    /// Open the live transcript window when a recording starts. Default on.
+    static func liveShowWindow() -> Bool {
+        live()?["show_window"] as? Bool ?? true
+    }
+
+    private static func live() -> [String: Any]? {
+        load()?["live"] as? [String: Any]
+    }
+
+    // MARK: - System audio
+
+    /// Bundle-id prefixes whose audio is left out of the system track. The
+    /// defaults are media players, whose audio is never the meeting.
+    static let defaultExcludedApps = [
+        "com.spotify.client",
+        "com.apple.Music",
+        "com.apple.podcasts",
+        "com.apple.TV",
+        "com.apple.QuickTimePlayerX",
+        "org.videolan.vlc",
+        "com.colliderli.iina",
+    ]
+
+    static func systemAudioExcludedApps() -> [String] {
+        systemAudio()?["exclude_apps"] as? [String] ?? defaultExcludedApps
+    }
+
+    /// When non-empty, record only these apps (bundle-id prefixes) instead of
+    /// everything minus the exclusions. Default empty.
+    static func systemAudioOnlyApps() -> [String] {
+        systemAudio()?["only_apps"] as? [String] ?? []
+    }
+
+    private static func systemAudio() -> [String: Any]? {
+        load()?["system_audio"] as? [String: Any]
+    }
+
+    // MARK: - Mic
 
     /// Apple voice processing (acoustic echo cancellation) on the mic, so
     /// speaker playback doesn't bleed into the mic track and get transcribed

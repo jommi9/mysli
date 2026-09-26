@@ -1,11 +1,14 @@
 import AVFoundation
 import FluidAudio
 import Foundation
+import MysliCore
 
-/// Parakeet TDT 0.6B v2 (English) via FluidAudio's Core ML port. Models
-/// download once into FluidAudio's managed cache (~600 MB); after that,
-/// transcription runs entirely on-device at roughly 20 seconds per hour of
-/// audio on Apple Silicon.
+/// Parakeet TDT 0.6B via FluidAudio's Core ML port. v2 is English-only and
+/// the default (best English recall); v3 covers 25 European languages,
+/// Finnish included, and detects the language itself. Models download once
+/// into FluidAudio's managed cache (~600 MB); after that, transcription runs
+/// entirely on-device at roughly 20 seconds per hour of audio on Apple
+/// Silicon.
 actor ParakeetEngine: TranscriptionEngine {
     enum EngineError: Error, CustomStringConvertible {
         case notPrepared
@@ -22,19 +25,42 @@ actor ParakeetEngine: TranscriptionEngine {
     }
 
     nonisolated let name = "parakeet"
-    nonisolated let model = "parakeet-tdt-0.6b-v2-coreml"
+    nonisolated let model: String
 
+    private let version: AsrModelVersion
+    private let vocabularyURL: URL?
     private var manager: AsrManager?
+    private var booster: VocabularyBooster?
+
+    init(version: AsrModelVersion, vocabularyURL: URL?) {
+        self.version = version
+        self.vocabularyURL = vocabularyURL
+        self.model = version == .v3
+            ? "parakeet-tdt-0.6b-v3-coreml"
+            : "parakeet-tdt-0.6b-v2-coreml"
+    }
 
     func prepare() async throws {
         guard manager == nil else { return }
-        let models = try await AsrModels.downloadAndLoad(version: .v2)
+        let models = try await AsrModels.downloadAndLoad(version: version)
         let manager = AsrManager()
         try await manager.loadModels(models)
         self.manager = manager
+
+        // A broken vocabulary file or a failed CTC model download costs the
+        // boost, never the transcript.
+        if let vocabularyURL {
+            do {
+                booster = try await VocabularyBooster.load(from: vocabularyURL)
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "warning: vocabulary boosting disabled — \(vocabularyURL.path): \(error)\n".utf8
+                ))
+            }
+        }
     }
 
-    func transcribe(_ audio: URL) async throws -> [TranscriptSegment] {
+    func transcribe(_ audio: URL) async throws -> [TimedWord] {
         guard let manager else { throw EngineError.notPrepared }
 
         // A track with no frames (recorder died before its first buffer)
@@ -52,52 +78,38 @@ actor ParakeetEngine: TranscriptionEngine {
 
         var state = try TdtDecoderState()
         let result = try await manager.transcribe(audio, decoderState: &state)
+        let tokens = result.tokenTimings ?? []
 
-        let words = buildWordTimings(from: result.tokenTimings ?? [])
-        guard !words.isEmpty else {
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty
-                ? []
-                : [TranscriptSegment(start: 0, end: result.duration, text: text)]
+        var words: [TimedWord]
+        if let booster, !tokens.isEmpty {
+            do {
+                words = try await booster.rescore(tokens: tokens, audio: audio)
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "warning: vocabulary boosting failed for \(audio.lastPathComponent): \(error)\n".utf8
+                ))
+                words = Self.words(from: tokens)
+            }
+        } else {
+            words = Self.words(from: tokens)
         }
-        return Self.segments(from: words)
+
+        if words.isEmpty {
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? [] : [TimedWord(text: text, start: 0, end: result.duration)]
+        }
+        return words
     }
 
     func release() async {
         if let manager { await manager.cleanup() }
         manager = nil
+        booster = nil
     }
 
-    /// Group word timings into readable segments: break on sentence-ending
-    /// punctuation (parakeet v2 emits punctuation), a silence gap, or a hard
-    /// length cap so a run-on speaker still wraps.
-    private static func segments(from words: [WordTiming]) -> [TranscriptSegment] {
-        var out: [TranscriptSegment] = []
-        var current: [WordTiming] = []
-
-        func flush() {
-            guard let first = current.first, let last = current.last else { return }
-            out.append(TranscriptSegment(
-                start: first.startTime,
-                end: last.endTime,
-                text: current.map(\.word).joined(separator: " ")
-            ))
-            current = []
+    static func words(from tokens: [TokenTiming]) -> [TimedWord] {
+        buildWordTimings(from: tokens).map {
+            TimedWord(text: $0.word, start: $0.startTime, end: $0.endTime)
         }
-
-        for word in words {
-            if let last = current.last, word.startTime - last.endTime > 1.0 {
-                flush()
-            }
-            current.append(word)
-            let endsSentence = word.word.hasSuffix(".")
-                || word.word.hasSuffix("?")
-                || word.word.hasSuffix("!")
-            if endsSentence || current.count >= 60 {
-                flush()
-            }
-        }
-        flush()
-        return out
     }
 }
