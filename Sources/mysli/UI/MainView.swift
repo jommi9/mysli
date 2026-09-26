@@ -160,11 +160,11 @@ private struct MeetingDetail: View {
 
     private func header(_ document: TranscriptDocument?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(document?.session.title ?? "Meeting \(meeting.title)")
+            Text(meeting.started?.formatted(.dateTime.weekday(.wide).day().month(.wide).hour().minute())
+                 ?? meeting.id)
                 .font(.title2.weight(.semibold))
-            if let started = meeting.started {
-                Text(started.formatted(date: .complete, time: .shortened)
-                     + (meeting.durationSeconds.map { " · \(max(1, $0 / 60)) min" } ?? ""))
+            if !meeting.subtitle.isEmpty {
+                Text(meeting.subtitle)
                     .foregroundStyle(.secondary)
             }
             if let document, document.speakers.contains(where: { $0.talk_seconds > 0 }) {
@@ -247,18 +247,18 @@ private struct TranscriptList: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(document.segments, id: \.id) { segment in
+            LazyVStack(alignment: .leading, spacing: 18) {
+                ForEach(document.turns(), id: \.segmentIDs) { turn in
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(TranscriptDocument.clock(segment.start_ms))
+                        Text(TranscriptDocument.clock(turn.start_ms))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.tertiary)
                             .frame(width: 44, alignment: .trailing)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(TranscriptDocument.speakerLabel(segment.speaker))
+                            Text(TranscriptDocument.speakerLabel(turn.speaker))
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(SpeakerStyle.color(segment.speaker))
-                            Text(segment.text)
+                                .foregroundStyle(SpeakerStyle.color(turn.speaker))
+                            Text(turn.text)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                         }

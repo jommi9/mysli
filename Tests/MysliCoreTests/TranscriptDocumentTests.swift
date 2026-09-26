@@ -63,6 +63,15 @@ final class TranscriptDocumentTests: XCTestCase {
         XCTAssertTrue(md.contains("_30 min · Me "))
     }
 
+    func testTurnsMergeConsecutiveSegmentsOfOneSpeaker() {
+        let turns = sample().turns()
+        XCTAssertEqual(turns.map(\.speaker), ["them", "me", "them"])
+        XCTAssertEqual(turns[1].text, "Mostly on track. Audit is done.")
+        XCTAssertEqual(turns[1].segmentIDs, [1, 2])
+        // A long pause splits a turn even without a speaker change.
+        XCTAssertEqual(sample().turns(maxGapMs: 0).count, 4)
+    }
+
     func testClock() {
         XCTAssertEqual(TranscriptDocument.clock(65_000), "1:05")
         XCTAssertEqual(TranscriptDocument.clock(3_725_000), "1:02:05")

@@ -56,9 +56,11 @@ enum UISnapshots {
         }
     }
 
-    /// Put the view in a real window (split views and lists are AppKit
-    /// backed and don't render off-window), let it lay out, then capture
-    /// the window frame including title bar and toolbar.
+    /// Put the view in a real on-screen window, let it lay out, then capture
+    /// it with screencapture so the window server composites it exactly as
+    /// on screen (macOS 26 glass sidebars and toolbars don't survive an
+    /// in-process cacheDisplay). Falls back to cacheDisplay if screencapture
+    /// isn't allowed.
     private static func render<V: View>(_ view: V, size: NSSize, dark: Bool, to url: URL) throws {
         let window = NSWindow(
             contentRect: NSRect(origin: NSPoint(x: 80, y: 80), size: size),
@@ -71,15 +73,24 @@ enum UISnapshots {
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.contentViewController = NSHostingController(rootView: view)
         window.setContentSize(size)
+        window.level = .floating
         window.orderFrontRegardless()
-        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        RunLoop.main.run(until: Date().addingTimeInterval(2))
 
-        guard let frameView = window.contentView?.superview else { return }
-        frameView.layoutSubtreeIfNeeded()
-        guard let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return }
-        frameView.cacheDisplay(in: frameView.bounds, to: rep)
-        guard let png = rep.representation(using: .png, properties: [:]) else { return }
-        try png.write(to: url)
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", url.path]
+        try? capture.run()
+        capture.waitUntilExit()
+
+        if capture.terminationStatus != 0 || !FileManager.default.fileExists(atPath: url.path) {
+            print("screencapture failed (\(capture.terminationStatus)), using cacheDisplay")
+            if let frameView = window.contentView?.superview,
+               let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) {
+                frameView.cacheDisplay(in: frameView.bounds, to: rep)
+                try rep.representation(using: .png, properties: [:])?.write(to: url)
+            }
+        }
         window.close()
         print("wrote \(url.lastPathComponent)")
     }

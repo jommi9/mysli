@@ -168,6 +168,43 @@ extension TranscriptDocument {
     }
 }
 
+// MARK: - Turns
+
+extension TranscriptDocument {
+    /// Consecutive segments from one speaker, read as a single paragraph.
+    public struct Turn: Sendable, Equatable {
+        public let speaker: String
+        public let start_ms: Int
+        public let end_ms: Int
+        public let text: String
+        public let segmentIDs: [Int]
+    }
+
+    /// Segments are sentence-sized, which reads choppy with a speaker label
+    /// on every line. A turn merges a speaker's consecutive segments until
+    /// the other speaker talks or there's a pause longer than `maxGapMs`.
+    public func turns(maxGapMs: Int = 4_000) -> [Turn] {
+        var out: [Turn] = []
+        for seg in segments {
+            if let last = out.last, last.speaker == seg.speaker, seg.start_ms - last.end_ms <= maxGapMs {
+                out[out.count - 1] = Turn(
+                    speaker: last.speaker,
+                    start_ms: last.start_ms,
+                    end_ms: max(last.end_ms, seg.end_ms),
+                    text: last.text + " " + seg.text,
+                    segmentIDs: last.segmentIDs + [seg.id]
+                )
+            } else {
+                out.append(Turn(
+                    speaker: seg.speaker, start_ms: seg.start_ms, end_ms: seg.end_ms,
+                    text: seg.text, segmentIDs: [seg.id]
+                ))
+            }
+        }
+        return out
+    }
+}
+
 // MARK: - Rendering
 
 extension TranscriptDocument {
@@ -232,8 +269,8 @@ extension TranscriptDocument {
             body.append("_\(summary)_")
             body.append("")
         }
-        for seg in segments {
-            body.append("**[\(Self.clock(seg.start_ms))] \(Self.speakerLabel(seg.speaker)):** \(seg.text)")
+        for turn in turns() {
+            body.append("**[\(Self.clock(turn.start_ms))] \(Self.speakerLabel(turn.speaker)):** \(turn.text)")
             body.append("")
         }
         return (fm + body).joined(separator: "\n")

@@ -70,7 +70,7 @@ public enum NotionPayload {
     }
 
     /// The page body: a summary line, a divider, then one paragraph per
-    /// segment ("0:12  Me: text").
+    /// speaker turn ("0:12  Me: text").
     public static func blocks(for document: TranscriptDocument) -> [JSONValue] {
         var blocks: [JSONValue] = []
         let summary = document.summaryLine
@@ -78,10 +78,10 @@ public enum NotionPayload {
             blocks.append(paragraph(richText(summary, italic: true, color: "gray")))
         }
         blocks.append(.object(["object": .string("block"), "type": .string("divider"), "divider": .object([:])]))
-        for seg in document.segments {
-            var rich = richText(TranscriptDocument.clock(seg.start_ms) + "  ", color: "gray")
-            rich += richText(TranscriptDocument.speakerLabel(seg.speaker) + ": ", bold: true)
-            rich += richText(seg.text)
+        for turn in document.turns() {
+            var rich = richText(TranscriptDocument.clock(turn.start_ms) + "  ", color: "gray")
+            rich += richText(TranscriptDocument.speakerLabel(turn.speaker) + ": ", bold: true)
+            rich += richText(turn.text)
             blocks.append(paragraph(rich))
         }
         return blocks
