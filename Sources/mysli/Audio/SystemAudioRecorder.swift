@@ -2,12 +2,19 @@ import AVFoundation
 import CoreAudio
 import Foundation
 
-/// Records all system audio output to a file via a Core Audio process tap
-/// (macOS 14.2+). No virtual device, no kernel extension — the tap mixes every
-/// process's output to stereo and hands us buffers through a private aggregate
-/// device. First use triggers the one-time "System Audio Recording" TCC prompt
-/// and lights the purple recording indicator while active.
-final class SystemAudioRecorder {
+/// Records system audio output to a file via a Core Audio process tap
+/// (macOS 14.2+). No virtual device, no kernel extension — the tap mixes the
+/// selected processes' output to stereo and hands us buffers through a
+/// private aggregate device. First use triggers the one-time "System Audio
+/// Recording" TCC prompt and lights the purple recording indicator while
+/// active.
+///
+/// Which processes the tap hears is a `TapScope`: by default everything
+/// except media players, or only the listed apps. Processes come and go
+/// during a meeting (a browser spins up its audio helper when the call
+/// connects), so the tap's process list follows Core Audio's process list
+/// for the whole session.
+final class SystemAudioRecorder: @unchecked Sendable {
     enum RecorderError: Error, CustomStringConvertible {
         case tapCreationFailed(OSStatus)
         case tapFormatUnreadable(OSStatus)
@@ -29,7 +36,12 @@ final class SystemAudioRecorder {
         }
     }
 
+    private let scope: TapScope
     private var tapID = AudioObjectID(kAudioObjectUnknown)
+    private var tapDescription: CATapDescription?
+    private var tappedProcesses: [AudioObjectID] = []
+    private var processListListener: AudioObjectPropertyListenerBlock?
+    private var tapUpdateFailed = false
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
     private var file: AVAudioFile?
@@ -42,10 +54,17 @@ final class SystemAudioRecorder {
     /// Start capturing system audio, encoding AAC into `url` (use a .caf
     /// extension — CAF needs no finalization pass, so a crash mid-meeting
     /// loses nothing already written).
+    init(scope: TapScope = .fromConfig()) {
+        self.scope = scope
+    }
+
     func start(writingTo url: URL) throws {
         guard !isRecording else { return }
 
-        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        let processes = scope.matchingProcesses()
+        let description = scope.isInclusive
+            ? CATapDescription(stereoMixdownOfProcesses: processes)
+            : CATapDescription(stereoGlobalTapButExcludeProcesses: processes)
         description.name = "mysli system tap"
         description.isPrivate = true
         description.muteBehavior = .unmuted
@@ -54,12 +73,18 @@ final class SystemAudioRecorder {
         let status = AudioHardwareCreateProcessTap(description, &newTapID)
         guard status == noErr else { throw RecorderError.tapCreationFailed(status) }
         tapID = newTapID
+        tapDescription = description
+        tappedProcesses = processes
+        FileHandle.standardError.write(Data(
+            "system tap: \(scope.summary) · \(processes.count) matching process(es) now\n".utf8
+        ))
 
         do {
             let format = try tapStreamFormat()
             try createAggregateDevice(tapUUID: description.uuid)
             file = try makeFile(url: url, format: format)
             try installIOProc(format: format)
+            watchProcessList()
         } catch {
             cleanup()
             throw error
@@ -156,7 +181,78 @@ final class SystemAudioRecorder {
         guard status == noErr else { throw RecorderError.deviceStartFailed(status) }
     }
 
+    /// Re-evaluate the scope whenever Core Audio's process list changes and
+    /// push the new process set into the live tap.
+    private func watchProcessList() {
+        var address = Self.processListAddress
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.refreshTappedProcesses()
+        }
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &address, queue, listener
+        )
+        if status == noErr {
+            processListListener = listener
+        } else {
+            FileHandle.standardError.write(Data(
+                "warning: can't watch audio processes (OSStatus \(status)) — tap scope fixed at start\n".utf8
+            ))
+        }
+    }
+
+    /// Runs on `queue`.
+    private func refreshTappedProcesses() {
+        guard !tapUpdateFailed, tapID != kAudioObjectUnknown, let description = tapDescription else { return }
+        let processes = scope.matchingProcesses()
+        guard processes != tappedProcesses else { return }
+
+        description.processes = processes
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyDescription,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value = description
+        let status = withUnsafeMutablePointer(to: &value) { pointer in
+            AudioObjectSetPropertyData(
+                tapID, &address, 0, nil,
+                UInt32(MemoryLayout<CATapDescription>.size), pointer
+            )
+        }
+        if status == noErr {
+            tappedProcesses = processes
+            FileHandle.standardError.write(Data(
+                "system tap: now \(processes.count) matching process(es)\n".utf8
+            ))
+        } else {
+            // Keep recording with the set we have rather than retrying on
+            // every process-list change.
+            tapUpdateFailed = true
+            FileHandle.standardError.write(Data(
+                "warning: tap update failed (OSStatus \(status)) — keeping the process set from start\n".utf8
+            ))
+        }
+    }
+
+    private static var processListAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
     private func cleanup() {
+        if let listener = processListListener {
+            var address = Self.processListAddress
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject), &address, queue, listener
+            )
+            processListListener = nil
+            // Let a refresh already running on the queue finish before the
+            // tap it touches is destroyed.
+            queue.sync {}
+        }
         if let procID, aggregateID != kAudioObjectUnknown {
             AudioDeviceDestroyIOProcID(aggregateID, procID)
         }
@@ -169,6 +265,9 @@ final class SystemAudioRecorder {
             AudioHardwareDestroyProcessTap(tapID)
             tapID = AudioObjectID(kAudioObjectUnknown)
         }
+        tapDescription = nil
+        tappedProcesses = []
+        tapUpdateFailed = false
         file = nil
     }
 }
