@@ -25,10 +25,12 @@ public struct TranscriptDocument: Codable, Sendable, Equatable {
         public var duration_seconds: Int?
         /// IANA zone the times were rendered in, e.g. "Europe/Berlin".
         public var timezone: String
+        /// The calendar event the recording matched, if any.
+        public var calendar: MeetingInfo?
 
         public init(
             id: String, title: String, started_at: String?, ended_at: String?,
-            duration_seconds: Int?, timezone: String
+            duration_seconds: Int?, timezone: String, calendar: MeetingInfo? = nil
         ) {
             self.id = id
             self.title = title
@@ -36,6 +38,7 @@ public struct TranscriptDocument: Codable, Sendable, Equatable {
             self.ended_at = ended_at
             self.duration_seconds = duration_seconds
             self.timezone = timezone
+            self.calendar = calendar
         }
     }
 
@@ -142,9 +145,11 @@ extension TranscriptDocument {
         let speakers = ids.map { id in
             let segs = segments.filter { $0.speaker == id }
             let seconds = talk[id] ?? 0
+            // In a 1:1 with a calendar invite, "them" is one known person.
+            let label = id == "them" ? session.calendar?.otherPersonName ?? speakerLabel(id) : speakerLabel(id)
             return Speaker(
                 id: id,
-                label: speakerLabel(id),
+                label: label,
                 source: source(id),
                 talk_seconds: (seconds * 10).rounded() / 10,
                 talk_share: totalTalk > 0 ? ((seconds / totalTalk) * 1000).rounded() / 1000 : 0,
@@ -208,6 +213,21 @@ extension TranscriptDocument {
 // MARK: - Rendering
 
 extension TranscriptDocument {
+    /// Display label for a speaker id: the other person's name when the
+    /// calendar knew it, else "Me" / "Them".
+    public func label(for speaker: String) -> String {
+        speakers.first { $0.id == speaker }?.label ?? Self.speakerLabel(speaker)
+    }
+
+    /// File name (without extension) for exports: the session id, plus the
+    /// meeting title when the calendar gave one, so folders sort by time and
+    /// still read well.
+    public var exportBaseName: String {
+        guard let title = session.calendar?.title else { return session.id }
+        let safe = MeetingMatcher.fileSafe(title)
+        return safe.isEmpty ? session.id : "\(session.id) \(safe)"
+    }
+
     /// Pretty-printed JSON with stable key order.
     public func jsonData() throws -> Data {
         let encoder = JSONEncoder()
@@ -250,9 +270,20 @@ extension TranscriptDocument {
         if let ended = session.ended_at { fm.append("ended: \(ended)") }
         if let seconds = session.duration_seconds { fm.append("duration_seconds: \(seconds)") }
         fm.append("timezone: \(yaml(session.timezone))")
+        if let calendar = session.calendar {
+            fm.append("calendar_event: \(yaml(calendar.title))")
+            if let organizer = calendar.organizer { fm.append("organizer: \(yaml(organizer))") }
+            if !calendar.attendees.isEmpty {
+                fm.append("attendees:")
+                for a in calendar.attendees {
+                    fm.append("  - \(yaml(a.displayName ?? "unknown"))" + (a.email.map { "  # \($0)" } ?? ""))
+                }
+            }
+        }
         fm.append("speakers:")
         for s in speakers {
             fm.append("  - id: \(s.id)")
+            fm.append("    label: \(yaml(s.label))")
             fm.append("    source: \(s.source)")
             fm.append("    talk_seconds: \(s.talk_seconds)")
             fm.append("    talk_share: \(s.talk_share)")
@@ -270,7 +301,7 @@ extension TranscriptDocument {
             body.append("")
         }
         for turn in turns() {
-            body.append("**[\(Self.clock(turn.start_ms))] \(Self.speakerLabel(turn.speaker)):** \(turn.text)")
+            body.append("**[\(Self.clock(turn.start_ms))] \(label(for: turn.speaker)):** \(turn.text)")
             body.append("")
         }
         return (fm + body).joined(separator: "\n")

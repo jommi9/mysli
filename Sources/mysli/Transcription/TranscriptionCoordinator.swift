@@ -152,8 +152,16 @@ actor TranscriptionCoordinator {
             words["me"] = result.kept
         }
 
+        // Normally written when recording started; look it up now for
+        // sessions where that didn't finish (or predates the feature).
+        var calendar = SessionCalendar.read(from: dir)
+        if calendar == nil, let started = meta.started {
+            calendar = await CalendarLookup.meeting(around: started)
+            if let calendar { SessionCalendar.write(calendar, to: dir) }
+        }
+
         let document = TranscriptDocument.build(
-            session: meta.session(id: dir.lastPathComponent),
+            session: meta.session(id: dir.lastPathComponent, calendar: calendar),
             engine: .init(
                 name: engine.name,
                 model: engine.model,
@@ -274,14 +282,15 @@ private struct SessionMeta {
     }
 
     /// Session block for the transcript, times in the Mac's local zone.
-    func session(id: String) -> TranscriptDocument.Session {
+    func session(id: String, calendar: MeetingInfo?) -> TranscriptDocument.Session {
         TranscriptDocument.Session(
             id: id,
-            title: started.map(Self.title) ?? id,
+            title: calendar?.title ?? started.map(Self.title) ?? id,
             started_at: started.map(Self.localISO),
             ended_at: ended.map(Self.localISO),
             duration_seconds: durationSeconds,
-            timezone: TimeZone.current.identifier
+            timezone: TimeZone.current.identifier,
+            calendar: calendar
         )
     }
 

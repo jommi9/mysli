@@ -160,12 +160,20 @@ private struct MeetingDetail: View {
 
     private func header(_ document: TranscriptDocument?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(meeting.started?.formatted(.dateTime.weekday(.wide).day().month(.wide).hour().minute())
-                 ?? meeting.id)
+            let when = meeting.started?.formatted(.dateTime.weekday(.wide).day().month(.wide).hour().minute())
+                ?? meeting.id
+            Text(meeting.calendarTitle ?? when)
                 .font(.title2.weight(.semibold))
-            if !meeting.subtitle.isEmpty {
-                Text(meeting.subtitle)
+            Text(([meeting.calendarTitle != nil ? when : nil,
+                   meeting.details.isEmpty ? nil : meeting.details] as [String?])
+                .compactMap { $0 }
+                .joined(separator: " · "))
+                .foregroundStyle(.secondary)
+            if let people = document?.session.calendar?.attendees.compactMap(\.displayName), !people.isEmpty {
+                Label(people.joined(separator: ", "), systemImage: "person.2")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             if let document, document.speakers.contains(where: { $0.talk_seconds > 0 }) {
                 TalkShareBar(speakers: document.speakers)
@@ -255,7 +263,7 @@ private struct TranscriptList: View {
                             .foregroundStyle(.tertiary)
                             .frame(width: 44, alignment: .trailing)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(TranscriptDocument.speakerLabel(turn.speaker))
+                            Text(document.label(for: turn.speaker))
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(SpeakerStyle.color(turn.speaker))
                             Text(turn.text)

@@ -9,8 +9,6 @@ import MysliCore
 final class LiveTranscript {
     enum Speaker: String, Sendable {
         case me, them
-
-        var label: String { self == .me ? "Me" : "Them" }
     }
 
     struct Line {
@@ -32,6 +30,15 @@ final class LiveTranscript {
     private(set) var status: String?
 
     var onChange: (() -> Void)?
+
+    /// The other person's name once the calendar lookup finds a 1:1.
+    var themName: String? {
+        didSet { onChange?() }
+    }
+
+    func label(_ speaker: Speaker) -> String {
+        speaker == .me ? "Me" : (themName ?? "Them")
+    }
 
     init(sessionDir: URL, recordingStartedAt: Date, dedupeEcho: Bool) {
         self.fileURL = sessionDir.appendingPathComponent("live.md")
@@ -108,7 +115,7 @@ final class LiveTranscript {
     private func save() {
         var out = ["# live transcript (draft)", ""]
         for line in lines {
-            out.append("**[\(timestamp(line.startedAt))] \(line.speaker.rawValue):** \(line.text)")
+            out.append("**[\(timestamp(line.startedAt))] \(label(line.speaker)):** \(line.text)")
             out.append("")
         }
         try? Data(out.joined(separator: "\n").utf8).write(to: fileURL, options: .atomic)

@@ -95,7 +95,7 @@ final class LiveTranscriptWindow {
         }
         for line in transcript.lines {
             add("\(transcript.timestamp(line.startedAt))  ", mono, .tertiaryLabelColor)
-            add("\(line.speaker.label): ", bold, color(line.speaker))
+            add("\(transcript.label(line.speaker)): ", bold, color(line.speaker))
             add(line.text + "\n", body, .labelColor)
         }
 
@@ -104,7 +104,7 @@ final class LiveTranscriptWindow {
             (.me, transcript.visibleMicPartial),
         ]
         for case let (speaker, text?) in partials where !text.isEmpty {
-            add("\(speaker.label): ", bold, color(speaker).withAlphaComponent(0.6))
+            add("\(transcript.label(speaker)): ", bold, color(speaker).withAlphaComponent(0.6))
             add(text + "…\n", body, .secondaryLabelColor)
         }
 

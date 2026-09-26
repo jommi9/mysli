@@ -130,6 +130,7 @@ final class AppController {
     private let mainWindow: MainWindowController
     private var session: RecordingSession?
     private var live: LiveSession?
+    private var liveTranscript: LiveTranscript?
     private var ticker: Timer?
 
     init(root: URL) {
@@ -177,6 +178,7 @@ final class AppController {
     private func startSession() {
         do {
             let newSession = try RecordingSession(root: root)
+            liveTranscript = nil
             let newLive = Config.liveEnabled() ? startLive(for: newSession) : nil
             do {
                 try newSession.start()
@@ -191,6 +193,7 @@ final class AppController {
             state.recordingSession = newSession.dir.lastPathComponent
             state.refresh()
             state.selection = newSession.dir.lastPathComponent
+            lookUpCalendar(for: newSession)
             FileHandle.standardError.write(Data("● recording → \(newSession.dir.path)\n".utf8))
         } catch {
             FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
@@ -211,6 +214,7 @@ final class AppController {
             recordingStartedAt: session.startedAt,
             dedupeEcho: Config.echoFilterEnabled()
         )
+        liveTranscript = transcript
         let live = LiveSession(transcript: transcript)
         session.attachLive(live)
         liveWindow.attach(transcript)
@@ -218,6 +222,21 @@ final class AppController {
             liveWindow.show()
         }
         return live
+    }
+
+    /// Match the recording to its calendar event in the background: the
+    /// meeting title and, in a 1:1, the other person's name for "Them".
+    /// Transcription repeats the lookup if this one hasn't finished.
+    private func lookUpCalendar(for session: RecordingSession) {
+        let dir = session.dir
+        let started = session.startedAt
+        let transcript = liveTranscript
+        Task { @MainActor [weak self] in
+            guard let info = await CalendarLookup.meeting(around: started) else { return }
+            SessionCalendar.write(info, to: dir)
+            transcript?.themName = info.otherPersonName
+            self?.state.refresh()
+        }
     }
 
     private func stopSession() {

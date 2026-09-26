@@ -58,7 +58,7 @@ final class TranscriptDocumentTests: XCTestCase {
         let md = sample().markdown()
         XCTAssertTrue(md.hasPrefix("---\ntitle: \"Meeting 2026-09-26 14:00\"\n"))
         XCTAssertTrue(md.contains("date: 2026-09-26T14:00:00+02:00"))
-        XCTAssertTrue(md.contains("  - id: me\n    source: microphone"))
+        XCTAssertTrue(md.contains("  - id: me\n    label: \"Me\"\n    source: microphone"))
         XCTAssertTrue(md.contains("**[0:01] Them:** How is the launch going?"))
         XCTAssertTrue(md.contains("_30 min · Me "))
     }

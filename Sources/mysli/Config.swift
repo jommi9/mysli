@@ -13,6 +13,7 @@ import Foundation
 ///         "vocabulary": "~/.config/mysli/vocabulary.txt"
 ///       },
 ///       "live": { "enabled": true, "show_window": true },
+///       "calendar": { "enabled": true },
 ///       "system_audio": { "exclude_apps": ["com.spotify.client"], "only_apps": [] },
 ///       "exports": {
 ///         "folders": ["~/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive/Meetings"],
@@ -141,6 +142,14 @@ enum Config {
 
     private static func systemAudio() -> [String: Any]? {
         load()?["system_audio"] as? [String: Any]
+    }
+
+    // MARK: - Calendar
+
+    /// Match recordings to calendar events for titles and attendee names.
+    /// Default on; macOS asks for Calendar access on the first recording.
+    static func calendarEnabled() -> Bool {
+        (load()?["calendar"] as? [String: Any])?["enabled"] as? Bool ?? true
     }
 
     // MARK: - Exports
