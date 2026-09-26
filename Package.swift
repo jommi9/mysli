@@ -9,9 +9,14 @@ let package = Package(
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.7.0"),
     ],
     targets: [
+        // Pure transcript logic (echo removal, segmentation, vocabulary
+        // alignment). Foundation only, so it unit-tests without models,
+        // permissions or audio hardware.
+        .target(name: "MysliCore"),
         .executableTarget(
             name: "mysli",
             dependencies: [
+                "MysliCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
@@ -28,5 +33,6 @@ let package = Package(
                 ]),
             ]
         ),
+        .testTarget(name: "MysliCoreTests", dependencies: ["MysliCore"]),
     ]
 )
