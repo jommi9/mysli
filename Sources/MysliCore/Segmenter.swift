@@ -17,7 +17,8 @@ public enum Segmenter {
             out.append(TimedSegment(
                 start: first.start,
                 end: last.end,
-                text: current.map(\.text).joined(separator: " ")
+                text: current.map(\.text).joined(separator: " "),
+                words: current
             ))
             current = []
         }

@@ -17,13 +17,17 @@ On top of quill it adds:
 - **Custom vocabulary** for names the model doesn't know (protocols, tokens,
   people, companies).
 - **Parakeet v3** as an option for Finnish and 24 other European languages.
+- **Structured transcripts** (versioned JSON with word timings and talk-time
+  stats, Markdown with front matter) and **exports** to any synced folder
+  (Google Drive, Dropbox, iCloud, an Obsidian vault) and to a Notion
+  database.
 
 ## Install
 
 ```sh
 swift build -c release
 sudo cp .build/release/mysli /usr/local/bin/mysli
-mysli doctor                      # permissions, models, vocabulary
+mysli doctor                      # permissions, models, vocabulary, exports
 mysli install --launch-at-login   # optional: run in the background on login
 ```
 
@@ -49,8 +53,9 @@ Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 | `mic.caf` | your side (default input device, AAC) |
 | `system.caf` | the call audio (AAC) |
 | `live.md` | the live draft, written as you go |
-| `transcript.md` | the final transcript, "me" and "them" with timestamps |
-| `transcript.json` | the same, machine-readable |
+| `transcript.md` | the final transcript with YAML front matter |
+| `transcript.json` | the same with word timings and stats (`mysli.transcript/2`) |
+| `exports.json` | where the transcript was exported, or why it failed |
 | `meta.json` | start/end times, per-track start offsets |
 | `transcribe.log` | what the transcription pass did, echo filter and vocabulary included |
 
@@ -80,6 +85,72 @@ roughly 20 seconds per hour of audio. Then:
 On headphones the echo filter has nothing to do. On laptop speakers it
 handles the bleed, and `mic_voice_processing: true` adds Apple's echo
 canceller on top (see the config notes).
+
+## Transcript format
+
+`transcript.json` is the canonical record, meant for scripts and LLM
+pipelines:
+
+```json
+{
+  "schema": "mysli.transcript/2",
+  "session": { "id": "2026.09.26-1400", "title": "Meeting 2026-09-26 14:00",
+               "started_at": "2026-09-26T14:00:03+02:00", "ended_at": "…",
+               "duration_seconds": 1805, "timezone": "Europe/Berlin" },
+  "engine": { "name": "parakeet", "model": "parakeet-tdt-0.6b-v2-coreml",
+              "vocabulary": true, "echo_filter": true, "echo_words_removed": 42 },
+  "speakers": [
+    { "id": "me", "label": "Me", "source": "microphone",
+      "talk_seconds": 712.4, "talk_share": 0.46, "word_count": 1893, "segment_count": 120 },
+    { "id": "them", "label": "Them", "source": "system_audio", "…": "…" }
+  ],
+  "segments": [
+    { "id": 0, "speaker": "them", "start_ms": 1200, "end_ms": 3400,
+      "text": "How is the launch going?",
+      "words": [ { "text": "How", "start_ms": 1200, "end_ms": 1380 }, "…" ] }
+  ],
+  "created_at": "2026-09-26T14:31:10+02:00"
+}
+```
+
+`transcript.md` carries the same session and speaker fields as YAML front
+matter above the readable transcript, so Obsidian, Notion imports and LLMs
+get the metadata without parsing JSON.
+
+## Exports
+
+Every new transcript is copied to the destinations under `exports` in the
+config. Each session's `exports.json` records the result per destination; a
+failed export (sync app not running, offline, Notion down) is retried the
+next time mysli starts, and a finished one is never repeated.
+
+**Google Drive, Dropbox, iCloud, Obsidian:** add the folder to
+`exports.folders`. mysli writes `<session>.md` and `<session>.json` there and
+the sync app does the rest, so no Google account setup is needed. With Google
+Drive for desktop the path looks like
+`~/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive/Meetings`. The
+folder must exist; mysli won't create it, so a stopped sync app shows up as a
+failed export instead of files landing in a dead folder. Audio is never
+exported.
+
+**Notion:** each transcript becomes a page in a database, titled with the
+meeting time, with the summary line and the timestamped transcript as the
+page body. If the database has a date property, the meeting's start and end
+go there.
+
+1. Create an internal integration at notion.so/profile/integrations and copy
+   its token.
+2. Store the token in the Keychain (it prompts, so the token stays out of
+   your shell history):
+   `security add-generic-password -s mysli.notion -a notion -w`
+3. Create a database (any title property works; add a Date property if you
+   want dates), open its `…` menu → Connections, and add the integration.
+4. Put the database id (the 32-character id in its URL) in
+   `exports.notion.database_id`.
+
+`mysli doctor` checks that export folders exist and the token is present.
+Adding a destination later doesn't upload old meetings; run
+`mysli export ~/Recordings/*` to backfill.
 
 ## Custom vocabulary
 
@@ -122,6 +193,10 @@ the defaults:
                      "com.colliderli.iina"],
     "only_apps": []
   },
+  "exports": {
+    "folders": [],
+    "notion": { "database_id": null }
+  },
   "mic_voice_processing": false,
   "on_stop": null
 }
@@ -153,15 +228,16 @@ the defaults:
 ```sh
 mysli                        # run the menu-bar daemon (^C to quit)
 mysli run --out <dir>        # custom recordings root
-mysli doctor                 # check permissions, models, vocabulary
+mysli doctor                 # check permissions, models, vocabulary, exports
+mysli export <session>...    # export older sessions to the configured destinations
 mysli install --launch-at-login
 mysli install --uninstall
 ```
 
 ## Layout
 
-- `Sources/MysliCore`: echo filter, sentence segmenter and vocabulary
-  alignment. Plain Foundation code with unit tests in `Tests/`.
+- `Sources/MysliCore`: echo filter, sentence segmenter, vocabulary
+  alignment, the transcript document and Notion payloads. Plain Foundation code with unit tests in `Tests/`.
 - `Sources/mysli/Audio`: mic capture (AVAudioEngine) and system capture
   (Core Audio process tap), both streaming AAC into CAF so a crash loses
   nothing already written.
@@ -169,6 +245,7 @@ mysli install --uninstall
   live transcript model.
 - `Sources/mysli/Transcription`: the batch queue, the Parakeet engine and
   vocabulary boosting.
+- `Sources/mysli/Export`: folder and Notion exports.
 - `Sources/mysli/UI`: menu bar and live panel.
 
 All models run through [FluidAudio](https://github.com/FluidInference/FluidAudio)

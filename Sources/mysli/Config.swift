@@ -14,6 +14,10 @@ import Foundation
 ///       },
 ///       "live": { "enabled": true, "show_window": true },
 ///       "system_audio": { "exclude_apps": ["com.spotify.client"], "only_apps": [] },
+///       "exports": {
+///         "folders": ["~/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive/Meetings"],
+///         "notion": { "database_id": "…" }
+///       },
 ///       "mic_voice_processing": false,
 ///       "on_stop": "my-hook"
 ///     }
@@ -137,6 +141,30 @@ enum Config {
 
     private static func systemAudio() -> [String: Any]? {
         load()?["system_audio"] as? [String: Any]
+    }
+
+    // MARK: - Exports
+
+    /// Folders that get a copy of every transcript (Markdown + JSON). A
+    /// Google Drive, Dropbox or iCloud folder syncs them onward; an Obsidian
+    /// vault indexes them. Each folder must already exist.
+    static func exportFolders() -> [URL] {
+        (exports()?["folders"] as? [String] ?? [])
+            .filter { !$0.isEmpty }
+            .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
+    }
+
+    /// Notion database that gets a page per transcript. The integration
+    /// token is read from the Keychain (see `Secrets`).
+    static func notionDatabaseID() -> String? {
+        guard let notion = exports()?["notion"] as? [String: Any],
+              let id = notion["database_id"] as? String, !id.isEmpty
+        else { return nil }
+        return id
+    }
+
+    private static func exports() -> [String: Any]? {
+        load()?["exports"] as? [String: Any]
     }
 
     // MARK: - Mic

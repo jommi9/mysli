@@ -1,13 +1,14 @@
 import AppKit
 import ArgumentParser
 import Foundation
+import os
 
 @main
 struct Mysli: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "mysli",
         abstract: "Local meeting recorder + transcriber. Records mic and system audio as two tracks, then transcribes on-device.",
-        subcommands: [Run.self, Doctor.self, Install.self],
+        subcommands: [Run.self, Doctor.self, Install.self, Export.self],
         defaultSubcommand: Run.self
     )
 }
@@ -71,6 +72,43 @@ struct Doctor: ParsableCommand {
         if !DoctorReport.allOK(checks) {
             throw ExitCode(1)
         }
+    }
+}
+
+struct Export: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Export transcribed sessions to the configured folders and Notion.",
+        discussion: """
+        New transcripts export automatically. Use this to backfill older
+        sessions after adding a destination. Destinations a session was
+        already exported to are skipped.
+        """
+    )
+
+    @Argument(help: "Session folders, e.g. ~/Recordings/2026.09.26-1400")
+    var sessions: [String]
+
+    func run() throws {
+        guard !Exporter.configuredTargets().isEmpty else {
+            FileHandle.standardError.write(Data("no exports configured in \(Config.path.path)\n".utf8))
+            throw ExitCode(64)
+        }
+        let dirs = sessions.map {
+            URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        // ArgumentParser's sync entry point: run the async export on a
+        // detached task and wait for it.
+        let done = DispatchSemaphore(value: 0)
+        let failed = OSAllocatedUnfairLock(initialState: 0)
+        Task.detached {
+            for dir in dirs {
+                let failures = await Exporter.run(dir: dir) { print("\(dir.lastPathComponent): \($0)") }
+                failed.withLock { $0 += failures.count }
+            }
+            done.signal()
+        }
+        done.wait()
+        if failed.withLock({ $0 }) > 0 { throw ExitCode(1) }
     }
 }
 

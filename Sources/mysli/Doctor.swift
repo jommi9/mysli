@@ -22,7 +22,7 @@ enum DoctorReport {
             checkRecordingsRoot(recordingsRoot),
             checkTranscription(),
             checkVocabulary(),
-        ]
+        ] + checkExports()
     }
 
     static func checkMicrophone() -> Check {
@@ -118,6 +118,30 @@ enum DoctorReport {
             )
         }
         return Check(name: "vocabulary (\(terms) terms)", status: .ok, remediation: nil)
+    }
+
+    /// Local checks only: folders exist, a Notion token is present.
+    static func checkExports() -> [Check] {
+        var checks: [Check] = []
+        for folder in Config.exportFolders() {
+            var isDir: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir) && isDir.boolValue
+            checks.append(Check(
+                name: "export folder \(folder.lastPathComponent)",
+                status: exists ? .ok : .warn("\(folder.path) doesn't exist"),
+                remediation: exists ? nil : "create it, or start the app that syncs it (Google Drive, Dropbox)"
+            ))
+        }
+        if Config.notionDatabaseID() != nil {
+            let hasToken = Secrets.notionToken() != nil
+            checks.append(Check(
+                name: "notion export",
+                status: hasToken ? .ok : .warn("no token in the Keychain"),
+                remediation: hasToken ? nil
+                    : "security add-generic-password -s \(Secrets.notionKeychainService) -a notion -w"
+            ))
+        }
+        return checks
     }
 
     static func print(_ checks: [Check]) {

@@ -24,11 +24,14 @@ public struct TimedSegment: Sendable, Equatable {
     public var start: TimeInterval
     public var end: TimeInterval
     public var text: String
+    /// The words the segment was built from, with their own timings.
+    public var words: [TimedWord]
 
-    public init(start: TimeInterval, end: TimeInterval, text: String) {
+    public init(start: TimeInterval, end: TimeInterval, text: String, words: [TimedWord] = []) {
         self.start = start
         self.end = end
         self.text = text
+        self.words = words
     }
 }
 
