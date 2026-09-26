@@ -50,7 +50,7 @@ enum UISnapshots {
             settings.notionDatabaseID = "1f2e3d4c5b6a79881f2e3d4c5b6a7988"
             try render(
                 SettingsView(model: settings, recordingsRoot: URL(fileURLWithPath: NSHomeDirectory() + "/Recordings")) {},
-                size: NSSize(width: 520, height: 600), dark: dark,
+                size: NSSize(width: 520, height: 720), dark: dark,
                 to: dir.appendingPathComponent("settings-\(suffix).png")
             )
         }

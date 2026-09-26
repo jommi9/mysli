@@ -145,7 +145,7 @@ struct SettingsView: View {
             }
             .padding(16)
         }
-        .frame(width: 520, height: 600)
+        .frame(width: 520, height: 720)
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result, !model.exportFolders.contains(url) {
                 model.exportFolders.append(url)
