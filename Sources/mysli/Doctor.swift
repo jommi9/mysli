@@ -1,4 +1,5 @@
 import AVFoundation
+import EventKit
 import FluidAudio
 import Foundation
 
@@ -22,6 +23,7 @@ enum DoctorReport {
             checkRecordingsRoot(recordingsRoot),
             checkTranscription(),
             checkVocabulary(),
+            checkCalendar(),
         ] + checkExports()
     }
 
@@ -118,6 +120,28 @@ enum DoctorReport {
             )
         }
         return Check(name: "vocabulary (\(terms) terms)", status: .ok, remediation: nil)
+    }
+
+    static func checkCalendar() -> Check {
+        guard Config.calendarEnabled() else {
+            return Check(name: "calendar", status: .warn("disabled in config"), remediation: nil)
+        }
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess:
+            return Check(name: "calendar", status: .ok, remediation: nil)
+        case .notDetermined:
+            return Check(
+                name: "calendar",
+                status: .warn("not yet requested — will prompt on first recording"),
+                remediation: nil
+            )
+        default:
+            return Check(
+                name: "calendar",
+                status: .warn("no access — meetings won't get titles or names"),
+                remediation: "System Settings → Privacy & Security → Calendars → enable for mysli"
+            )
+        }
     }
 
     /// Local checks only: folders exist, a Notion token is present.

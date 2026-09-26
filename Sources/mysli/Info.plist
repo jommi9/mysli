@@ -8,6 +8,8 @@
     <string>mysli</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>mysli records your microphone during meetings so you can transcribe them later. Audio never leaves this Mac.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>mysli matches each recording to the calendar event it belongs to, so transcripts get the meeting title and the other person's name. Nothing leaves this Mac.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>mysli records system audio (the other side of your meetings) so you can transcribe them later. Audio never leaves this Mac.</string>
 </dict>

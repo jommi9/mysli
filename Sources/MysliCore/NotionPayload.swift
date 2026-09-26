@@ -77,10 +77,16 @@ public enum NotionPayload {
         if !summary.isEmpty {
             blocks.append(paragraph(richText(summary, italic: true, color: "gray")))
         }
+        if let calendar = document.session.calendar {
+            let people = calendar.attendees.compactMap(\.displayName)
+            if !people.isEmpty {
+                blocks.append(paragraph(richText("With " + people.joined(separator: ", "), color: "gray")))
+            }
+        }
         blocks.append(.object(["object": .string("block"), "type": .string("divider"), "divider": .object([:])]))
         for turn in document.turns() {
             var rich = richText(TranscriptDocument.clock(turn.start_ms) + "  ", color: "gray")
-            rich += richText(TranscriptDocument.speakerLabel(turn.speaker) + ": ", bold: true)
+            rich += richText(document.label(for: turn.speaker) + ": ", bold: true)
             rich += richText(turn.text)
             blocks.append(paragraph(rich))
         }

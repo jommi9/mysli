@@ -19,13 +19,19 @@ struct Meeting: Identifiable, Equatable {
     let started: Date?
     let durationSeconds: Int?
     var status: Status
+    /// Title of the matched calendar event, if any.
+    var calendarTitle: String? = nil
 
-    var title: String {
-        guard let started else { return id }
-        return started.formatted(date: .omitted, time: .shortened)
+    var time: String {
+        started?.formatted(date: .omitted, time: .shortened) ?? id
     }
 
-    var subtitle: String {
+    var title: String {
+        calendarTitle ?? time
+    }
+
+    /// Length and, unless done, where it is in the pipeline.
+    var details: String {
         var parts: [String] = []
         if let durationSeconds {
             parts.append("\(max(1, Int((Double(durationSeconds) / 60).rounded()))) min")
@@ -38,6 +44,13 @@ struct Meeting: Identifiable, Equatable {
         case .ready: break
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Second line in the list: the time when the title is the event name.
+    var subtitle: String {
+        ([calendarTitle != nil ? time : nil, details.isEmpty ? nil : details] as [String?])
+            .compactMap { $0 }
+            .joined(separator: " · ")
     }
 }
 
@@ -108,7 +121,8 @@ final class AppState {
                 dir: dir,
                 started: started,
                 durationSeconds: meta?["duration_seconds"] as? Int,
-                status: status(of: dir, id: id)
+                status: status(of: dir, id: id),
+                calendarTitle: SessionCalendar.read(from: dir)?.title
             ))
         }
         meetings = found

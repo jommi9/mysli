@@ -10,6 +10,7 @@ final class SettingsModel {
     var echoFilter = true
     var liveEnabled = true
     var liveShowWindow = true
+    var calendarEnabled = true
     var exportFolders: [URL] = []
     var notionDatabaseID = ""
     var hasNotionToken = false
@@ -20,6 +21,7 @@ final class SettingsModel {
         m.echoFilter = Config.echoFilterEnabled()
         m.liveEnabled = Config.liveEnabled()
         m.liveShowWindow = Config.liveShowWindow()
+        m.calendarEnabled = Config.calendarEnabled()
         m.exportFolders = Config.exportFolders()
         m.notionDatabaseID = Config.notionDatabaseID() ?? ""
         m.hasNotionToken = Secrets.notionToken() != nil
@@ -39,6 +41,10 @@ final class SettingsModel {
             live["enabled"] = liveEnabled
             live["show_window"] = liveShowWindow
             json["live"] = live
+
+            var calendar = json["calendar"] as? [String: Any] ?? [:]
+            calendar["enabled"] = calendarEnabled
+            json["calendar"] = calendar
 
             var exports = json["exports"] as? [String: Any] ?? [:]
             exports["folders"] = folders
@@ -71,6 +77,7 @@ struct SettingsView: View {
                         Text("Multilingual, incl. Finnish").tag("v3")
                     }
                     Toggle("Remove echo when on speakers", isOn: $model.echoFilter)
+                    Toggle("Name meetings and people from Calendar", isOn: $model.calendarEnabled)
                 }
 
                 Section("Live transcript") {

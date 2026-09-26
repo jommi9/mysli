@@ -60,6 +60,7 @@ Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 | `live.md` | the live draft, written as you go |
 | `transcript.md` | the final transcript with YAML front matter |
 | `transcript.json` | the same with word timings and stats (`mysli.transcript/2`) |
+| `calendar.json` | the calendar event the recording matched, if any |
 | `exports.json` | where the transcript was exported, or why it failed |
 | `meta.json` | start/end times, per-track start offsets |
 | `transcribe.log` | what the transcription pass did, echo filter and vocabulary included |
@@ -90,6 +91,20 @@ roughly 20 seconds per hour of audio. Then:
 On headphones the echo filter has nothing to do. On laptop speakers it
 handles the bleed, and `mic_voice_processing: true` adds Apple's echo
 canceller on top (see the config notes).
+
+## Calendar
+
+When a recording starts, mysli looks for the calendar event it belongs to in
+macOS Calendar, so any iCloud, Google or Exchange account added there works
+without a separate sign-in. It picks a non-all-day event that is running, or
+starts within 10 minutes, preferring events with guests over solo blocks.
+
+The event gives the meeting its title in the window, the transcript, file
+names and Notion. In a 1:1 invite (you plus one other person), "Them"
+becomes that person's name everywhere: live panel, transcript, Markdown and
+Notion. Group meetings keep "Them", since the system audio is one mixed
+track. The first recording asks for Calendar access; turn the feature off
+in settings or with `"calendar": { "enabled": false }`.
 
 ## Transcript format
 
@@ -130,7 +145,7 @@ failed export (sync app not running, offline, Notion down) is retried the
 next time mysli starts, and a finished one is never repeated.
 
 **Google Drive, Dropbox, iCloud, Obsidian:** add the folder to
-`exports.folders`. mysli writes `<session>.md` and `<session>.json` there and
+`exports.folders`. mysli writes `<session> <meeting title>.md` and `.json` there and
 the sync app does the rest, so no Google account setup is needed. With Google
 Drive for desktop the path looks like
 `~/Library/CloudStorage/GoogleDrive-you@gmail.com/My Drive/Meetings`. The
@@ -192,6 +207,7 @@ the defaults:
     "vocabulary": "~/.config/mysli/vocabulary.txt"
   },
   "live": { "enabled": true, "show_window": true },
+  "calendar": { "enabled": true },
   "system_audio": {
     "exclude_apps": ["com.spotify.client", "com.apple.Music", "com.apple.podcasts",
                      "com.apple.TV", "com.apple.QuickTimePlayerX", "org.videolan.vlc",

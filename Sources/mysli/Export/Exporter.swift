@@ -101,7 +101,7 @@ struct Exporter {
             guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else {
                 throw ExportError.folderMissing(folder)
             }
-            let base = document.session.id
+            let base = document.exportBaseName
             try Data(document.markdown().utf8)
                 .write(to: folder.appendingPathComponent("\(base).md"), options: .atomic)
             try document.jsonData()

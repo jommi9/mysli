@@ -110,11 +110,11 @@ enum UISnapshots {
             Meeting(id: "rec", dir: root.appendingPathComponent("rec"), started: now.addingTimeInterval(-768),
                     durationSeconds: nil, status: .recording),
             Meeting(id: "a", dir: root.appendingPathComponent("a"), started: at(0, 10, 30),
-                    durationSeconds: 1_860, status: .ready),
+                    durationSeconds: 1_860, status: .ready, calendarTitle: "Hyperliquid integration sync"),
             Meeting(id: "b", dir: root.appendingPathComponent("b"), started: at(0, 9, 0),
                     durationSeconds: 1_320, status: .exportFailed),
             Meeting(id: "c", dir: root.appendingPathComponent("c"), started: at(1, 16, 0),
-                    durationSeconds: 2_700, status: .ready),
+                    durationSeconds: 2_700, status: .ready, calendarTitle: "Anna / Joakim 1:1"),
             Meeting(id: "d", dir: root.appendingPathComponent("d"), started: at(1, 11, 15),
                     durationSeconds: 900, status: .transcribing),
         ]
@@ -151,7 +151,17 @@ enum UISnapshots {
                 started_at: iso.string(from: started),
                 ended_at: iso.string(from: started.addingTimeInterval(1_860)),
                 duration_seconds: 1_860,
-                timezone: TimeZone.current.identifier
+                timezone: TimeZone.current.identifier,
+                calendar: MeetingInfo(
+                    title: "Hyperliquid integration sync",
+                    starts_at: iso.string(from: started),
+                    ends_at: iso.string(from: started.addingTimeInterval(1_800)),
+                    organizer: "Anna Korhonen",
+                    attendees: [
+                        .init(name: "Joakim", email: "joakim@example.com", is_self: true),
+                        .init(name: "Anna Korhonen", email: "anna@example.com", is_self: false),
+                    ]
+                )
             ),
             engine: .init(name: "parakeet", model: "parakeet-tdt-0.6b-v2-coreml",
                           vocabulary: true, echo_filter: true, echo_words_removed: 12),
