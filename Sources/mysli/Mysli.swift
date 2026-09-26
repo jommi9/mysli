@@ -3,9 +3,9 @@ import ArgumentParser
 import Foundation
 
 @main
-struct Quill: ParsableCommand {
+struct Mysli: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "quill",
+        commandName: "mysli",
         abstract: "Local meeting recorder + transcriber. Records mic and system audio as two tracks, then transcribes on-device.",
         subcommands: [Run.self, Doctor.self, Install.self],
         defaultSubcommand: Run.self
@@ -54,7 +54,7 @@ struct Run: ParsableCommand {
         signal(SIGINT, SIG_IGN)
 
         FileHandle.standardError.write(Data(
-            "quill up · recordings → \(root.path) · ^C to quit\n".utf8
+            "mysli up · recordings → \(root.path) · ^C to quit\n".utf8
         ))
         app.run()
     }
@@ -123,7 +123,7 @@ final class AppController {
             FileHandle.standardError.write(Data("● recording → \(newSession.dir.path)\n".utf8))
         } catch {
             FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
-            notifyUser(title: "quill — recording failed", body: "\(error)")
+            notifyUser(title: "mysli — recording failed", body: "\(error)")
             return
         }
 

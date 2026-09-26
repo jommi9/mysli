@@ -77,13 +77,13 @@ actor TranscriptionCoordinator {
             publish(.transcribing(session: dir.lastPathComponent, queued: queue.count))
             do {
                 try await transcribe(dir)
-                notifyUser(title: "quill — transcript ready", body: dir.lastPathComponent)
+                notifyUser(title: "mysli — transcript ready", body: dir.lastPathComponent)
                 runHook(for: dir)
             } catch {
                 log(dir, "transcription failed: \(error)")
                 lastFailure = dir.lastPathComponent
                 notifyUser(
-                    title: "quill — transcription failed",
+                    title: "mysli — transcription failed",
                     body: "\(dir.lastPathComponent) — see transcribe.log"
                 )
             }

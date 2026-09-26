@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.jommi9.mysli</string>
+    <key>CFBundleName</key>
+    <string>mysli</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>mysli records your microphone during meetings so you can transcribe them later. Audio never leaves this Mac.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>mysli records system audio (the other side of your meetings) so you can transcribe them later. Audio never leaves this Mac.</string>
+</dict>
+</plist>
