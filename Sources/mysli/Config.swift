@@ -195,6 +195,20 @@ enum Config {
         return json
     }
 
+    /// Read-modify-write the config file, keeping keys the caller doesn't
+    /// touch. Settings take effect on the next recording or transcription,
+    /// since every accessor rereads the file.
+    static func update(_ mutate: (inout [String: Any]) -> Void) throws {
+        var json = load() ?? [:]
+        mutate(&json)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(
+            withJSONObject: json,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+        try data.write(to: path, options: .atomic)
+    }
+
     /// Resolve the recordings root from an optional CLI override.
     static func resolveRoot(cliOverride: String?) -> URL {
         if let cliOverride {

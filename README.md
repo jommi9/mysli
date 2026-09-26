@@ -37,14 +37,19 @@ ship XCTest).
 
 ## Use
 
-1. Run `mysli` (or let the LaunchAgent start it).
-2. Click the feather in the menu bar and pick **Start recording**, or press
-   ⌘R with the menu open. The first run asks for microphone and System Audio
-   Recording permission. The live transcript panel opens.
-3. Pick **Stop recording** when the call ends. The batch transcript is
-   written a few seconds later and a notification fires.
+1. Run `mysli`. The window opens and the feather appears in the menu bar.
+2. Press **Start recording** (⌘R) when the call begins. The first run asks
+   for microphone and System Audio Recording permission. The live transcript
+   panel opens.
+3. Press **Stop** when the call ends. The meeting shows as transcribing in
+   the list and the transcript appears a few seconds later.
 
-**Show live transcript** (⌘L in the menu) reopens the panel.
+The window lists meetings by day. Selecting one shows its transcript with
+timestamps, a talk-time bar, **Copy transcript** (as Markdown) and **Show in
+Finder**. The gear button opens settings for language, live transcript, echo
+removal, export folders and Notion; they apply from the next recording.
+Closing the window leaves mysli in the menu bar, where **Open mysli…** brings
+it back. When mysli starts at login it stays in the menu bar.
 
 Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 
@@ -226,7 +231,8 @@ the defaults:
 ## CLI
 
 ```sh
-mysli                        # run the menu-bar daemon (^C to quit)
+mysli                        # open the window and menu bar (^C to quit)
+mysli run --background       # menu bar only (what the login agent runs)
 mysli run --out <dir>        # custom recordings root
 mysli doctor                 # check permissions, models, vocabulary, exports
 mysli export <session>...    # export older sessions to the configured destinations

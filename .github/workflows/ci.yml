@@ -28,3 +28,26 @@ jobs:
           }
       - name: Test
         run: swift test
+
+  # Renders the windows with sample data and pushes the PNGs to the
+  # ui-snapshots branch, so UI changes can be reviewed without a Mac.
+  ui-snapshots:
+    if: github.event_name == 'push'
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: Render
+        run: .build/debug/mysli snapshot-ui snapshots
+      - name: Publish to ui-snapshots branch
+        run: |
+          cd snapshots
+          git init -q -b ui-snapshots
+          git add .
+          git -c user.name="mysli CI" -c user.email="ci@users.noreply.github.com" \
+            commit -q -m "UI snapshots for ${GITHUB_SHA}"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" ui-snapshots

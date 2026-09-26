@@ -48,7 +48,7 @@ struct Install: ParsableCommand {
 
         let plist: [String: Any] = [
             "Label": Self.label,
-            "ProgramArguments": [binary, "run"],
+            "ProgramArguments": [binary, "run", "--background"],
             "RunAtLoad": true,
             "KeepAlive": ["SuccessfulExit": false] as [String: Any],
             "ProcessType": "Interactive",
