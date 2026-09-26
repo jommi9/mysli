@@ -6,13 +6,25 @@ on:
 
 jobs:
   macos:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-15 ships Xcode 16 (Swift 6.1); macos-26 ships Xcode 26.
+        runner: [macos-15, macos-26]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
-        run: swift --version
+        run: xcodebuild -version && swift --version
       - name: Build
-        run: swift build
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee build.log || {
+            echo "::group::Unique errors"
+            grep -E "error:" build.log | sort -u
+            echo "::endgroup::"
+            exit 1
+          }
       - name: Test
         run: swift test
