@@ -50,6 +50,10 @@ final class SystemAudioRecorder: @unchecked Sendable {
     /// Wall-clock time of the first captured buffer — the track's true start,
     /// used to offset-align the two tracks' transcript timestamps.
     private(set) var firstBufferAt: Date?
+    /// Receives every buffer after it is written, on the tap queue. The
+    /// buffer wraps Core Audio's memory and is only valid during the call.
+    /// Set before `start`. Used by the live transcript.
+    var onBuffer: ((AVAudioPCMBuffer) -> Void)?
 
     /// Start capturing system audio, encoding AAC into `url` (use a .caf
     /// extension — CAF needs no finalization pass, so a crash mid-meeting
@@ -174,6 +178,7 @@ final class SystemAudioRecorder: @unchecked Sendable {
             } catch {
                 FileHandle.standardError.write(Data("system track write failed: \(error)\n".utf8))
             }
+            self.onBuffer?(buffer)
         }
         guard status == noErr, let procID else { throw RecorderError.ioProcCreationFailed(status) }
 

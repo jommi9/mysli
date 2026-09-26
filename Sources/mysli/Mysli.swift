@@ -81,13 +81,16 @@ final class AppController {
     private let root: URL
     private let menuBar = MenuBarController()
     private let transcription = TranscriptionCoordinator()
+    private let liveWindow = LiveTranscriptWindow()
     private var session: RecordingSession?
+    private var live: LiveSession?
     private var ticker: Timer?
 
     init(root: URL) {
         self.root = root
         menuBar.onToggle = { [weak self] in self?.toggle() }
         menuBar.onOpenFolder = { [weak self] in self?.openFolder() }
+        menuBar.onShowLive = { [weak self] in self?.liveWindow.show() }
         menuBar.onQuit = { [weak self] in self?.shutdown() }
         menuBar.update(recording: false, elapsed: nil)
 
@@ -118,8 +121,15 @@ final class AppController {
     private func startSession() {
         do {
             let newSession = try RecordingSession(root: root)
-            try newSession.start()
+            let newLive = Config.liveEnabled() ? startLive(for: newSession) : nil
+            do {
+                try newSession.start()
+            } catch {
+                if let newLive { Task { await newLive.finish() } }
+                throw error
+            }
             session = newSession
+            live = newLive
             FileHandle.standardError.write(Data("● recording → \(newSession.dir.path)\n".utf8))
         } catch {
             FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
@@ -133,9 +143,31 @@ final class AppController {
         }
     }
 
+    /// Set up the live transcript for a session that is about to start.
+    private func startLive(for session: RecordingSession) -> LiveSession {
+        let transcript = LiveTranscript(
+            sessionDir: session.dir,
+            recordingStartedAt: session.startedAt,
+            dedupeEcho: Config.echoFilterEnabled()
+        )
+        let live = LiveSession(transcript: transcript)
+        session.attachLive(live)
+        liveWindow.attach(transcript)
+        if Config.liveShowWindow() {
+            liveWindow.show()
+        }
+        return live
+    }
+
     private func stopSession() {
         guard let session else { return }
         session.stop()
+        if let live {
+            self.live = nil
+            // The recorders have stopped, so the feeds are complete. The
+            // final transcript doesn't wait on the live one.
+            Task { await live.finish() }
+        }
         let elapsed = Self.format(Date().timeIntervalSince(session.startedAt))
         FileHandle.standardError.write(Data(
             "○ stopped · \(elapsed) · \(session.dir.path)\n".utf8

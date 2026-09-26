@@ -34,6 +34,9 @@ final class MicRecorder: @unchecked Sendable {
     /// Wall-clock time of the first captured buffer — the track's true start,
     /// used to offset-align the two tracks' transcript timestamps.
     private(set) var firstBufferAt: Date?
+    /// Receives every mono buffer after it is written, on the capture
+    /// thread. Set before `start`. Used by the live transcript.
+    var onBuffer: ((AVAudioPCMBuffer) -> Void)?
 
     // Liveness check state (voice-processing path only). Written from the tap
     // callback, read on main when deciding to fall back.
@@ -177,6 +180,7 @@ final class MicRecorder: @unchecked Sendable {
             } catch {
                 FileHandle.standardError.write(Data("mic track write failed: \(error)\n".utf8))
             }
+            self.onBuffer?(buffer)
         }
     }
 
@@ -202,7 +206,9 @@ final class MicRecorder: @unchecked Sendable {
                 try file.write(from: mono)
             } catch {
                 FileHandle.standardError.write(Data("mic track write failed: \(error)\n".utf8))
+                return
             }
+            self.onBuffer?(mono)
         }
     }
 
